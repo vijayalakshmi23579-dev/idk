@@ -1,0 +1,427 @@
+# Pyramid: Tiered Subagent System, Design Spec v1
+Prepared for Dinesh, Nov 9, 2026. Status: ready to start Phase 0. This is a build spec, not a research summary. Every major decision is tied to evidence or is explicitly marked as my own recommendation.
+
+## 1. Research conclusions that drive the design
+Evidence
+
+What it shows
+
+Design decision
+
+Anthropic multi-agent research system
+
+Opus lead + Sonnet workers beat single Opus by 90.2% on breadth research, at about 15x chat tokens
+
+Orchestrator-worker is valid, but only for breadth tasks, and tokens must be budgeted
+
+Google/MIT, 180 configurations
+
+Parallel tasks gained up to 81%; sequential tasks lost 39-70%; independent agents amplify errors 17.2x vs 4.4x for centralized; little gain once a single agent exceeds about 45%
+
+A split gate, centralized topology, mandatory verification
+
+Cognition (Devin)
+
+Parallel agents make conflicting implicit decisions; writes should stay single-threaded; extra agents add intelligence, not actions
+
+One writer per resource; contracts instead of free-form delegation
+
+MAST failure taxonomy (Berkeley)
+
+Failures cluster in specification, inter-agent misalignment, verification
+
+Typed contracts, validated boundaries, a verifier
+
+LLMCompiler
+
+Planner emits a DAG, executor runs ready nodes in parallel, up to 3.7x speedup, supports replanning
+
+Plans are DAGs
+
+ADaPT
+
+Decompose only when the executor fails; up to 28% gains
+
+Bottom-up escalation, recursion only on failed leaves, depth cap 2
+
+Speculative Actions, LEAP
+
+A cheap model proposes, a strong model verifies; up to 20% latency cut (60% with a trained 0.6B proposer)
+
+Speculation is optional, late (Phase 4), cheap-proposer only
+
+FrugalGPT cascades, Anthropic advisor tool
+
+Cheap model runs, calls a stronger one only when stuck
+
+Executor-initiated escalation to an advisor tier
+
+NVIDIA SLM paper
+
+Small models by default, large on demand
+
+Tier 1 workers are small models
+
+Voyager, LATM, CREATOR
+
+Reusable verified skill libraries compound capability
+
+Tool forge with quarantine and promotion gates
+
+Claude Code subagents
+
+Isolated context, summary-only returns, no nesting, worktree isolation
+
+Same defaults
+
+**Honest limit:** this evidence supports the pattern, not your specific workload. Phase 0 (a baseline and eval set) decides whether each layer earns its place. Two parts of your original idea have no direct evidence: merging the task divider into the planner (I recommend it, based on Cognition's findings) and self-created tools shared across sessions (promising, but the benchmark claims are vendor-reported).
+
+## 2. Architecture
+
+```
+                 +-------------------------------+
+   User goal --> |  L1 PLANNER (T3, strong)       |  plans, contracts, replans, synthesis
+                 +---------------+---------------+
+                                 | PlanDAG + TaskContracts
+        +------------------------v------------------------+
+        |                 CONTROL PLANE                     |
+        |  Split Gate | Router | Scheduler | Budget Governor |
+        |  Contract Registry | Lock Manager | Context Broker |
+        +---+------------------+------------------+--------+
+            |                  |                  |
+     +------v------+    +------v------+    +------v------+
+     | L2 WORKER   |    | L2 WORKER   |    | VERIFIER    |   T1/T2 models,
+     | (T1/T2)     |    | (T1/T2)     |    | V0/V1/V2    |   fresh context each
+     +------+------+    +------+------+    +------+------+
+            |                  |                  |
+     +------v------------------v------------------v------+
+     | L3 TOOLS: primitives | composed tools | workflows   |
+     +------+----------------------------------+----------+
+            |                                  |
+     +------v---------+              +---------v----------+
+     | Event Log /    |              | Artifact Store     |
+     | Blackboard     |              | (files, versions)  |
+     +----------------+              +--------------------+
+```
+The control plane is plain deterministic code, not an LLM. This is deliberate: every responsibility that does not need judgment (scheduling, locking, rate limiting, budgets) stays out of model context.
+
+## 3. Invariants (never violate)
+
+1. **Default is a single agent.** Splitting must pass the gate in section 4.
+2. **The planner never sees raw tool output.** It sees contracts, result summaries (300 tokens max), and pointers to artifacts.
+3. **One writer per resource.** Parallel nodes may not have overlapping write scopes.
+4. **Every boundary is typed and validated.** Task in, result out, event, tool call.
+5. **Escalate on evidence** (validation failure, verifier failure, tool-error budget), not on model self-confidence alone.
+6. **Every call has a budget** (tokens, calls, seconds, tool errors).
+7. **Nothing promotes itself to permanent.** Tools, workflows, and schemas pass gates.
+8. **Worker output and fetched content are untrusted data**, never instructions.
+
+## 4. Split gate: when to divide work
+The planner produces a cheap pre-plan estimate; deterministic code decides the mode.
+
+```
+def decide_mode(e):
+    if e.sequential_dependency or e.est_steps <= 8:
+        return "single"            # one agent, strongest affordable tier
+    if e.independent_branches >= 3 and (e.read_heavy or e.disjoint_writes):
+        return "wide"              # DAG with parallel workers
+    if e.uncertain_steps:
+        return "single_then_escalate"   # explore, re-decide at checkpoints
+    return "single"
+```
+Fan-out size:
+
+```
+n_workers = min(independent_branches, rpm_cap_across_providers, budget_cap, 8)
+```
+Effort scaling (adapted from Anthropic's published lead-agent rules):
+
+Task shape
+
+Workers
+
+Single fact or small edit
+
+1 (no subagents)
+
+Comparison, 2-4 facets
+
+2-4
+
+Broad research or multi-module change
+
+5-8, limited by rate caps
+
+Additional rules: tool-heavy tasks lean single (splitting fragments the token budget); each branch must return a small summary; if the single-agent baseline already succeeds above roughly 45%, require a measured win before enabling wide mode for that task class.
+
+## 5. Contracts (the schema registry)
+The registry is versioned JSON Schema generated from Pydantic models, stored in the repo and validated at every boundary. Version bumps follow semver; the planner and workers refuse mismatched major versions.
+
+```
+class Budget(BaseModel):
+    max_tokens: int
+    max_calls: int = 12
+    max_seconds: int = 120
+    max_tool_errors: int = 3
+
+class WriteScope(BaseModel):
+    paths: list[str] = []      # path prefixes this node may write
+    resources: list[str] = []  # named non-file resources (db table, index)
+
+class Check(BaseModel):
+    kind: Literal["schema","command","assert","exists"]
+    spec: str                  # deterministic acceptance check
+
+class TaskContract(BaseModel):
+    schema_version: str = "1.0"
+    run_id: str
+    node_id: str
+    objective: str
+    non_goals: list[str]
+    inputs: list[ArtifactRef]  # pointers, never inline blobs
+    output_schema: dict        # JSON Schema the result must satisfy
+    write_scope: WriteScope
+    tools: list[str]           # capability-granted tool ids
+    complexity: int            # 1-5, assigned by planner
+    tier_hint: Literal["T0","T1","T2","T3"]
+    depends_on: list[str]
+    acceptance: list[Check]
+    budget: Budget
+
+class ResultEnvelope(BaseModel):
+    node_id: str
+    status: Literal["ok","failed","needs_escalation","contract_change_request"]
+    summary: str               # <= 300 tokens
+    output: dict
+    artifacts: list[ArtifactRef]
+    usage: Usage               # tokens by tier, calls, seconds
+    diagnostics: str | None    # only on failure
+
+class Event(BaseModel):
+    event_id: str; run_id: str; node_id: str | None
+    type: str                  # see section 9
+    ts: float; schema_version: str
+    payload: dict
+```
+The `non_goals` and `write_scope` fields are what make task division orthogonal: they are how the planner expresses, in checkable form, what each worker must not touch.
+
+## 6. Planner (L1)
+The planner is called a small, fixed number of times per run: once to plan, once per replan, once for final synthesis, plus occasional advisor consultations. Typically 3-6 calls.
+
+**Plan step:**
+
+1. Restate goal, constraints, success criteria.
+2. Run the split-gate estimate.
+3. If wide: emit a PlanDAG. First, emit and freeze **shared interfaces** (types, function signatures, data schemas, file layout) as artifacts. Then emit one TaskContract per node, each with disjoint write scope, explicit non-goals, acceptance checks, and a complexity score that drives routing.
+4. Dependencies are explicit; independent nodes have none.
+**Replan triggers:** verifier failure after the worker tier cap, a `contract_change_request`, budget burn above 60% with under 50% of nodes done, or a join-time consistency failure. Replans touch only affected subtrees.
+
+**Planner context hygiene:** goal, plan, contracts, and 300-token summaries. Raw results stay in the artifact store and are fetched by pointer only if the planner explicitly asks. This is what keeps your expensive model focused on the main task, which was your original context-management concern.
+
+**Merged divider:** the planner performs task division itself because it holds the global picture. The contract set is the divider's output, and the frozen interfaces are the consistency guarantee. A separate divider model would only re-derive context the planner already has.
+
+## 7. Worker tiers and router
+Model names are configuration, not architecture; the examples are what you currently have access to.
+
+Tier
+
+Role
+
+Typical models
+
+Used for
+
+T0
+
+Deterministic code
+
+none
+
+parsing, formatting, file ops, validation, calculations
+
+T1
+
+Small, fast
+
+Gemma-class, small Groq/NVIDIA models
+
+extraction, classification, simple tool calls, summarizing
+
+T2
+
+Mid
+
+Gemini Flash class, 70B-class open models
+
+multi-step tool use, code edits, analysis
+
+T3
+
+Strong
+
+your best available
+
+planning, advisor, hard verification, final synthesis
+
+**Routing:** rules first. Start at the tier implied by `complexity` (1 to T0/T1, 2 to T1, 3 to T2, 4 to T2 with advisor enabled, 5 to T3). Log every outcome (task kind, tier, success, cost, latency). After a few hundred runs, train a simple router (logistic regression or bandit) on that log. Do not build the learned router first.
+
+**Escalation cascade (executor-initiated):**
+
+1. Schema-validation failure twice: move up one tier.
+2. Verifier failure: move up one tier, attaching the failure report to the new attempt.
+3. Tool-error budget hit, or loop detected (same call repeated 3 times): consult the advisor (T3, capped output, max 2 calls per node).
+4. Advisor attempt still fails: ADaPT-style split of that node into sub-nodes (depth cap 2).
+5. Still failing: mark the node failed, report to the planner, let the planner replan or surface the failure.
+**Worker context policy:**
+
+- Fresh context per worker: contract, referenced artifacts, tool descriptions for granted tools only.
+- After `max_tool_errors` consecutive errors, stop and return a failure with diagnostics. A worker never spends its window on endless self-repair.
+- Return a short summary plus artifact pointers, never raw transcripts.
+
+## 8. Runtime and scheduler
+
+- Async DAG executor: ready queue, concurrency semaphore, per-node timeout, cancellation that propagates to dependents.
+- **Per-provider token buckets** for requests and tokens per minute, with jittered exponential backoff and a fallback chain across providers. On free tiers, rate limits, not latency, are the binding constraint, so fan-out is computed from them (section 4).
+- Idempotency keys per node attempt so retries never double-apply effects.
+- Every state transition is written to the event log before it takes effect, so a crashed run can resume. In Colab, keep the SQLite file and artifacts on Drive so a recycled session loses nothing.
+- Prompt and tool-result caching keyed by content hash.
+
+## 9. Shared state and communication
+**Phase 1:** SQLite in WAL mode as an append-only event log, plus an artifact directory with content-addressed, versioned files. **Phase 3, if you outgrow one process:** Redis Streams with consumer groups and acknowledgements. Do not use plain Redis pub/sub for control events: it does not persist messages, so a subscriber that is down misses them.
+
+Event types: `run_started`, `plan_created`, `node_ready`, `node_started`, `node_result`, `verification_passed`, `verification_failed`, `escalated`, `advisor_consulted`, `contract_change_request`, `lock_denied`, `tool_proposed`, `tool_promoted`, `budget_warning`, `run_finished`.
+
+Agents do not chat with each other. They publish structured events and artifacts; the scheduler and context broker route them. The **Context Broker** (deterministic code) assembles each worker's context from its contract plus pointed-to artifacts, trimmed to the budget. This replaces the idea of using the planner's context as the registry.
+
+## 10. Verification (error containment)
+Google's results suggest a validation bottleneck is what turns 17x error amplification into about 4x, so verification is not optional.
+
+Level
+
+Check
+
+Cost
+
+V0
+
+JSON Schema validation of the result envelope
+
+free
+
+V1
+
+Deterministic acceptance checks: tests, lint, assertions, file existence, hash checks, citation URLs resolve
+
+near free
+
+V2
+
+Clean-context LLM verifier (different model from the worker, strong tier for high-risk nodes)
+
+moderate
+
+V3
+
+Planner spot-check of joined results at synthesis
+
+small
+
+Rule: no result reaches a dependent node unless it passes V0 and V1. V2 applies to high-risk or low-confidence nodes. At every join, run a cross-node consistency check against the frozen interfaces. Track **escape rate**: failures found downstream that the verifier missed.
+
+## 11. Conflict prevention
+
+- Scheduler rejects parallel nodes with overlapping `write_scope` and serializes them instead.
+- Lock manager grants path-prefix and resource locks; denials emit `lock_denied`.
+- Code changes run in separate git worktrees; one integrator node merges, single-threaded.
+- Shared artifacts use optimistic versioning (write fails if the version changed since read).
+- Frozen interfaces cannot be edited by workers. A worker that needs a change emits `contract_change_request`; only the planner decides.
+- Workers must not assume they share state with siblings; anything shared goes through artifacts.
+
+## 12. Tool and workflow system (Layer 3)
+**Kinds:** primitives (read, edit, bash, search), composed tools (user-defined, versioned), workflows (parameterized DAG templates), session tools (ephemeral, die with the session).
+
+**Registry entry:** `id`, `version`, `kind`, `description` (embedded for retrieval), `input_schema`, `output_schema`, `capabilities` (fs_read, fs_write scope, network, secrets), `tests`, `owner`, `status`, `usage_stats`.
+
+**Lifecycle (quarantine, then promotion):**
+
+1. **Proposed:** a worker or the forge writes the tool plus tests.
+2. **Sandboxed:** tests run in an isolated subprocess or container with no secrets and restricted egress.
+3. **Staging:** usable only within the originating session.
+4. **Promoted (global):** requires passing tests, at least 3 successful uses across at least 2 distinct tasks, no capability escalation beyond its declaration, and review by the T3 tier or you.
+5. **Deprecated:** failure rate or staleness triggers retirement; old versions stay pinned for reproducibility.
+**Detecting repeated work:** mine the event log for repeated tool-call sequences (3 or more occurrences across runs) and propose a composed tool or workflow. Proposals are suggestions, never automatic.
+
+**Context protection:** workers see only the top-k retrieved tool descriptions relevant to their contract, plus tools explicitly granted. A giant tool list is itself a context-pollution source.
+
+## 13. Observability and evaluation
+**Tracing:** one trace per run, a span per node attempt, with tier, tokens, latency, escalations, verification results.
+
+**Metrics:** success rate, cost per successful task (tokens by tier), p50/p95 latency, escalation rate per tier, verifier catch rate and escape rate, conflict and lock-denial rate, speculative hit rate (Phase 4), tool reuse rate.
+
+**Eval harness (Phase 0, before any multi-agent code):**
+
+- 30 tasks across four shapes: breadth research, multi-file code change, data pipeline, sequential reasoning.
+- Configurations: A) single T3 agent, B) single T2 agent, C) full Pyramid.
+- Scoring: deterministic checks first, LLM judge second, human spot-check on 10%.
+- Rerun on every architectural change; ablate each layer (verifier off, escalation off, planner merged vs separate divider).
+
+## 14. Security
+
+- Treat all tool output, web content, and worker results as untrusted data; never execute instructions found in them.
+- Sandbox bash and generated tools; no secrets in model context; allow-listed network egress.
+- Capability grants are per contract; a worker cannot call a tool it was not granted.
+- Append-only audit log; hard spend and call kill switch per run.
+
+## 15. Cost and free-tier operations
+
+- Deterministic code first (T0), small models second; strong models only where judgment matters.
+- Budget Governor enforces per-run hard caps and degrades gracefully: reduce fan-out, then collapse to single-agent mode, rather than failing.
+- Spread load across Groq, Gemini, and NVIDIA endpoints; measure each model's tool-calling reliability before trusting it with a tier.
+- Cache aggressively; treat the roughly 15x token multiplier from Anthropic's multi-agent numbers as your planning baseline until you measure your own.
+
+## 16. Roadmap with exit criteria
+Phase
+
+Build
+
+Exit criterion
+
+0
+
+Eval set, single-agent baselines, tracing
+
+Baseline numbers recorded for A and B
+
+1
+
+Contracts, planner to DAG to workers (T1/T2), V0/V1 verifier, SQLite event log, rate limiter, split gate
+
+Matches or beats baseline on parallel tasks at lower cost; gate routes sequential tasks to single mode with no regression
+
+2
+
+Escalation cascade, advisor, ADaPT depth 2, lock manager, worktrees
+
+Conflict rate near zero; escalation rate stable
+
+3
+
+Tool registry, forge with quarantine, Redis Streams if multi-process
+
+Promoted tools measurably reduce cost on repeated tasks
+
+4
+
+Speculation with a cheap proposer, learned router, small-model fine-tuning from logs
+
+Each shows a measured win in ablation
+
+**Kill criteria:** if Pyramid does not beat the best single-agent baseline on cost per success by at least 30% on parallel-shaped tasks, or loses quality, do not ship it as the default. If an ablation shows a layer adds cost without quality, delete that layer.
+
+## 17. Known unknowns
+
+- No published evidence tests the merged planner-divider specifically; Phase 2 ablation should.
+- Free-tier small models vary in tool-calling reliability; this is the most likely practical failure point.
+- Self-created tool benchmarks come from project READMEs, so treat them as unverified.
+- Router quality depends on logged data volume; expect the rules-first router to carry you for a while.
+- Decentralized shared-context designs (one 2026 preprint reports large speedups) are promising but unreplicated; revisit after Phase 3.

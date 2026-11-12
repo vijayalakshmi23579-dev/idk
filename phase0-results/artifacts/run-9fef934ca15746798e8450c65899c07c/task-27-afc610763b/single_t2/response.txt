@@ -1,0 +1,28 @@
+**Puzzle 4 – “A library has 120 books. One quarter are fiction. Of the non‑fiction books, one third are checked out. How many non‑fiction books are available?”**
+
+---
+
+### Step‑by‑step computation
+
+| Step | What we do | Numbers |
+|------|------------|----------|
+| **1. Total books** | Given | 120 books |
+| **2. Fiction books** | One‑quarter of the total are fiction | \(120 \times \frac14 = 30\) fiction books |
+| **3. Non‑fiction books** | Subtract fiction from total (or use the remaining fraction) | \(120 - 30 = 90\) non‑fiction books  <br>or \(120 \times \frac34 = 90\) |
+| **4. Checked‑out non‑fiction** | One‑third of the non‑fiction books are checked out | \(90 \times \frac13 = 30\) checked‑out non‑fiction books |
+| **5. Available non‑fiction** | Subtract checked‑out books from the non‑fiction total | \(90 - 30 = 60\) non‑fiction books available |
+
+---
+
+### Result
+
+**60 non‑fiction books are available** (out of the 120‑book library).
+
+### Fraction‑step summary
+
+1. **Fiction fraction**: \(\frac14\) of 120 → 30 books → **non‑fiction fraction** = \(1 - \frac14 = \frac34\).  
+2. **Non‑fiction count**: \(\frac34 \times 120 = 90\).  
+3. **Checked‑out fraction of non‑fiction**: \(\frac13\) of those 90 → 30 books.  
+4. **Available fraction of non‑fiction**: \(1 - \frac13 = \frac23\) of the non‑fiction set → \(\frac23 \times 90 = 60\).
+
+So the library has **60 non‑fiction books that are not checked out**.

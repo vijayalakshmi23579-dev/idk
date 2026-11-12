@@ -1,0 +1,10 @@
+**Puzzle 7 Solution:**
+
+- Initially completed reviews: 6 + 8 + 11 + 15 = **40**
+- 3 reviews fail validation → they are repeated (retried)
+- All 3 retries pass → those 3 become valid
+- Total valid reviews after retries: **40**
+
+The 3 failed reviews don't disappear; they are reprocessed and pass on retry, so all 40 originally completed reviews end up as valid.
+
+**Answer: 40**

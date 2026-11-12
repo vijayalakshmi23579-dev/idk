@@ -1,0 +1,11 @@
+{
+  "task_id": "code-05-path-containment",
+  "shape": "multi_file_code",
+  "baseline": "single_t2",
+  "model_id": "nvidia_nim/nvidia/nemotron-3.5-lightning-30b-a3b",
+  "checks_passed": false,
+  "quality_score": 0.5,
+  "tokens": 7864,
+  "api_calls": 6,
+  "duration_seconds": 43.967942639000285
+}

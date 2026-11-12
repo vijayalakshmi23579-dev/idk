@@ -1,0 +1,11 @@
+{
+  "task_id": "research-04-security-boundary",
+  "shape": "breadth_research",
+  "baseline": "pyramid",
+  "model_id": "nvidia_nim/nvidia/nemotron-3.5-super-vl-120b-a12b",
+  "checks_passed": false,
+  "quality_score": 0.0,
+  "tokens": 3713,
+  "api_calls": 1,
+  "duration_seconds": 11.951629273000435
+}

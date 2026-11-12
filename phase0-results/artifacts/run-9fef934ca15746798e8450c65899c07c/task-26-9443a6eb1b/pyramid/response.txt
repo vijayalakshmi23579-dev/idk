@@ -1,0 +1,15 @@
+Puzzle 3: Three jobs take 8, 13, and 5 minutes. The 13-minute job starts after the 8-minute job; the 5-minute job runs in parallel with both.
+
+**Dependency**
+- Job B (13 min) depends on Job A (8 min): it cannot start until Job A finishes.
+- Job C (5 min) has no dependencies and runs concurrently with both A and B.
+
+**Parallel schedule**
+- **t = 0 → 8 min:** Job A runs. Job C runs in parallel during this window and finishes at t = 5 min.
+- **t = 8 → 21 min:** Job B runs (started as soon as Job A completed). Job C is already done.
+
+**Critical path:** Job A → Job B = 8 + 13 = 21 minutes. Job C completes at 5 minutes, well before.
+
+**Earliest completion time: 21 minutes**
+
+This is a single straightforward reasoning case (well under eight steps, with a sequential dependency and no three independent branches), so it was completed directly without invoking the Task tool.

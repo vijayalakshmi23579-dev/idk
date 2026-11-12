@@ -1,0 +1,11 @@
+{
+  "task_id": "reason-04-library-inventory",
+  "shape": "sequential_reasoning",
+  "baseline": "single_t2",
+  "model_id": "nvidia_nim/nvidia/nemotron-3.5-lightning-30b-a3b",
+  "checks_passed": true,
+  "quality_score": 1.0,
+  "tokens": 1303,
+  "api_calls": 2,
+  "duration_seconds": 16.518247305999466
+}

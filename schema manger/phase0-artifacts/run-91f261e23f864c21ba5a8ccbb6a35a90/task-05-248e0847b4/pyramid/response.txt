@@ -1,0 +1,13 @@
+Based on the evidence pack in `architecture.md`, here is the description of the persisted conversation and memory features:
+
+## Persisted Conversation and Memory Features
+
+**SQLite** — Session messages are stored as **append-only** records in SQLite. This means conversation history is durably persisted and never mutated in place; new messages are only appended, preserving an immutable log of the dialogue.
+
+**FTS5** — SQLite is paired with **FTS5 (Full-Text Search version 5)** for searching across session messages. This enables fast, indexed full-text retrieval over the persisted conversation history.
+
+**Summaries retain source access** through two mechanisms:
+1. **Summary DAGs** — Summaries are organized as directed acyclic graphs, allowing hierarchical or branched summarization rather than a single flat summary.
+2. **Recoverable source messages** — The original source messages remain accessible/recoverable even after summarization, so summaries do not destroy the underlying conversation evidence; they provide a compressed view while preserving access to the raw source messages.
+
+These features together give the runtime query loop durable conversation state, searchable history, and summarized context that still links back to original source messages.

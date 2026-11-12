@@ -1,0 +1,4 @@
+Done. I read `events.json`, identified the purchases with amount >= 30 (alice: 30, cara: 40), and wrote `out/large_purchases.json` containing:
+
+- **count**: 2
+- **total**: 70

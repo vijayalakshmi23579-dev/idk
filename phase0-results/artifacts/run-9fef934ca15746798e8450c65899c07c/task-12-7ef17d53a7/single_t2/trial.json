@@ -1,0 +1,11 @@
+{
+  "task_id": "code-04-tier-router",
+  "shape": "multi_file_code",
+  "baseline": "single_t2",
+  "model_id": "nvidia_nim/nvidia/nemotron-3.5-lightning-30b-a3b",
+  "checks_passed": false,
+  "quality_score": 0.5,
+  "tokens": 2974,
+  "api_calls": 3,
+  "duration_seconds": 27.527901182999813
+}

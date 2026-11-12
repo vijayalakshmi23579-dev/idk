@@ -1,0 +1,27 @@
+I'll start by reading all the fixture files to understand the context and identify provider reliability controls and quota limits.
+
+
+Based on my review of all fixture files, here is the summary:
+
+## Current Provider Reliability Controls
+
+From **architecture.md** (line 11), the system currently implements the following provider reliability controls:
+
+1. **Bounded concurrency** — Provider calls are constrained in terms of simultaneous execution.
+2. **Retry behavior** — Failed provider calls are retried.
+3. **Fallback behavior** — The system falls back to alternative providers or paths when calls fail.
+
+## Missing Quota Limits
+
+Explicitly stated in **architecture.md** (line 11):
+
+> *"RPM and TPM quotas are not enforced."*
+
+The two quota limits that are **still missing** are:
+
+| Quota | Status |
+|-------|--------|
+| **RPM** (Requests Per Minute) | Not enforced |
+| **TPM** (Tokens Per Minute) | Not enforced |
+
+No other fixture files (events.json, puzzles.md, sales.csv, users.json) contain additional provider reliability or quota configuration information, so the architecture.md evidence is definitive on this point.

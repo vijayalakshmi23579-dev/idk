@@ -1,0 +1,11 @@
+{
+  "task_id": "pipeline-01-region-totals",
+  "shape": "data_pipeline",
+  "baseline": "single_t3",
+  "model_id": "nvidia_nim/nvidia/nemotron-3.5-super-vl-120b-a12b",
+  "checks_passed": true,
+  "quality_score": 1.0,
+  "tokens": 4242,
+  "api_calls": 3,
+  "duration_seconds": 6.040655943000274
+}

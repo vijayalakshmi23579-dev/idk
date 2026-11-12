@@ -1,0 +1,11 @@
+{
+  "task_id": "code-01-name-utilities",
+  "shape": "multi_file_code",
+  "baseline": "pyramid",
+  "model_id": "nvidia_nim/nvidia/nemotron-3.5-super-vl-120b-a12b",
+  "checks_passed": true,
+  "quality_score": 1.0,
+  "tokens": 5750,
+  "api_calls": 2,
+  "duration_seconds": 5.763462957000229
+}

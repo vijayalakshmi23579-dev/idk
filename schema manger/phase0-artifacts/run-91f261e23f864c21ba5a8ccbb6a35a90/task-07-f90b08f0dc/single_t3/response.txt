@@ -1,0 +1,25 @@
+I'll start by exploring the workspace and reading the available fixture files to understand the context.
+
+
+Based on the fixture file `architecture.md` (line 14), here is the answer:
+
+## Measurements a Phase 0 Report Should Capture
+
+A Phase 0 report should capture the following measurements:
+
+1. **Success checks**
+2. **Quality**
+3. **Tokens**
+4. **Calls**
+5. **Latency**
+6. **Model IDs**
+7. **Optional cost**
+8. **Human review**
+
+## How Unknown Prices Are Represented
+
+Unknown prices are represented as **null** — they remain explicitly unset/empty rather than being estimated, zeroed out, or omitted.
+
+---
+
+*Source: `/tmp/phase0-case-jyns10gr/architecture.md`, line 14: "Phase 0 reports include success checks, quality, tokens, calls, latency, model IDs, optional cost, and human review. Unknown prices remain null."*

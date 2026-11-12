@@ -1,0 +1,19 @@
+This is a small, single-file task with no branching or parallelism needed — well within direct-execution scope. Let me check the workspace first.
+
+
+I need to create two files in the `out/` subdirectory. This is a small, sequential task with no branching, so I'll complete it directly. Let me write both files.
+
+
+Both files have been created successfully.
+
+**`out/tier_router.py`** — Implements `tier_for_complexity(value)`:
+- `1, 2` → `"T1"`
+- `3, 4` → `"T2"`
+- `5` → `"T3"`
+- Any other value → raises `ValueError`
+
+**`out/test_tier_router.py`** — Boundary tests covering:
+- All valid inputs (1 through 5), including each tier's lower/upper bounds
+- Invalid inputs: `0`, `6`, `-1`, non-integer string `"3"`, and float `2.5` — all asserting `ValueError` is raised
+
+No parallel branching was needed since this was a small, sequential two-file task with no dependencies between distinct workstreams.

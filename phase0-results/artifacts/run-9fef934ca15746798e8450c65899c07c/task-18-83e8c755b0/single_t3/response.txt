@@ -1,0 +1,4 @@
+Created `/tmp/phase0-case-9i87tv8i/out/sku_totals.json`:
+
+- **A**: units 8, revenue 84.0
+- **B**: units 5, revenue 75.0

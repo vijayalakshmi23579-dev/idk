@@ -1,0 +1,15 @@
+This is a small, well-scoped task (about 4–6 steps, no sequential dependencies needed beyond file creation, but under the 8-step threshold and only two independent file writes). I'll complete it directly by writing both files in parallel.
+
+
+Both files are created. Here's a summary:
+
+**`out/split_gate.py`** — implements `decide_mode(steps, sequential, branches, read_heavy, disjoint_writes)`:
+- Returns `"single"` when `sequential` is True **or** `steps <= 8`
+- Returns `"wide"` when `branches >= 3` **and** (`read_heavy` or `disjoint_writes`)
+- Otherwise returns `"single"`
+
+**`out/test_split_gate.py`** — `unittest.TestCase` covering all three outcomes:
+- Sequential path → `"single"`
+- Steps-at-most-eight path → `"single"`
+- Wide path (with read-heavy, with disjoint-writes, with both) → `"wide"`
+- Negative cases: fewer than 3 branches, and neither read-heavy nor disjoint-writes → `"single"`

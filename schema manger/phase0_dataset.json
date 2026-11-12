@@ -1,0 +1,216 @@
+{
+  "schema_version": "1.0",
+  "tasks": [
+    {
+      "task_id": "research-01-provider-boundary",
+      "shape": "breadth_research",
+      "fixture": "phase0_fixtures",
+      "prompt": "Read architecture.md. Explain the provider-agnostic boundary and name the adapter and library involved. Be precise and use only the evidence pack.",
+      "acceptance": [{"kind":"assert","spec":"{\"target\":\"response\",\"contains\":\"LiteLLM\"}"}]
+    },
+    {
+      "task_id": "research-02-worker-isolation",
+      "shape": "breadth_research",
+      "fixture": "phase0_fixtures",
+      "prompt": "Summarize how Task workers are isolated and how their DAG executes. Include the node limit and the read/write scheduling distinction.",
+      "acceptance": [{"kind":"assert","spec":"{\"target\":\"response\",\"contains\":\"eight\"}"}]
+    },
+    {
+      "task_id": "research-03-split-gate",
+      "shape": "breadth_research",
+      "fixture": "phase0_fixtures",
+      "prompt": "State the deterministic split-gate conditions for single-agent and wide execution. Include the step threshold and branch requirement.",
+      "acceptance": [{"kind":"assert","spec":"{\"target\":\"response\",\"contains\":\"three independent branches\"}"}]
+    },
+    {
+      "task_id": "research-04-security-boundary",
+      "shape": "breadth_research",
+      "fixture": "phase0_fixtures",
+      "prompt": "Distinguish application-level filesystem/permission safeguards from OS isolation. What must not be claimed about Bash sandboxing?",
+      "acceptance": [{"kind":"assert","spec":"{\"target\":\"response\",\"contains\":\"no OS-level shell sandbox\"}"}]
+    },
+    {
+      "task_id": "research-05-persistence",
+      "shape": "breadth_research",
+      "fixture": "phase0_fixtures",
+      "prompt": "Describe the persisted conversation and memory features. Name SQLite, FTS5, and how summaries retain source access.",
+      "acceptance": [{"kind":"assert","spec":"{\"target\":\"response\",\"contains\":\"FTS5\"}"}]
+    },
+    {
+      "task_id": "research-06-provider-limits",
+      "shape": "breadth_research",
+      "fixture": "phase0_fixtures",
+      "prompt": "Summarize current provider reliability controls and explicitly identify the quota limits that are still missing.",
+      "acceptance": [{"kind":"assert","spec":"{\"target\":\"response\",\"contains\":\"RPM\"}"}]
+    },
+    {
+      "task_id": "research-07-phase0-metrics",
+      "shape": "breadth_research",
+      "fixture": "phase0_fixtures",
+      "prompt": "List the measurements a Phase 0 report should capture and explain how unknown prices are represented.",
+      "acceptance": [{"kind":"assert","spec":"{\"target\":\"response\",\"contains\":\"null\"}"}]
+    },
+    {
+      "task_id": "research-08-tool-schema-limits",
+      "shape": "breadth_research",
+      "fixture": "phase0_fixtures",
+      "prompt": "What information is provider-visible in tool schemas, and which two deferred/prompt behaviors must not be claimed?",
+      "acceptance": [{"kind":"assert","spec":"{\"target\":\"response\",\"contains\":\"deferred-schema\"}"}]
+    },
+    {
+      "task_id": "code-01-name-utilities",
+      "shape": "multi_file_code",
+      "fixture": "phase0_fixtures",
+      "prompt": "Create out/name_utils.py with normalize_name(value): trim whitespace, collapse internal whitespace, and casefold. Create out/test_name_utils.py with a focused test for '  Ada   LOVELACE '. Do not use shell commands.",
+      "acceptance": [{"kind":"assert","spec":"{\"path\":\"out/name_utils.py\",\"contains\":\"def normalize_name\"}"},{"kind":"assert","spec":"{\"path\":\"out/test_name_utils.py\",\"contains\":\"def test_normalize_name\"}"}]
+    },
+    {
+      "task_id": "code-02-csv-parsing",
+      "shape": "multi_file_code",
+      "fixture": "phase0_fixtures",
+      "prompt": "Create out/csv_tools.py with parse_rows(text) using Python's csv module and converting units to integers and revenue to floats. Create out/test_csv_tools.py with a test for a two-row input.",
+      "acceptance": [{"kind":"assert","spec":"{\"path\":\"out/csv_tools.py\",\"contains\":\"def parse_rows\"}"},{"kind":"assert","spec":"{\"path\":\"out/test_csv_tools.py\",\"contains\":\"def test_parse_rows\"}"}]
+    },
+    {
+      "task_id": "code-03-region-metrics",
+      "shape": "multi_file_code",
+      "fixture": "phase0_fixtures",
+      "prompt": "Create out/metrics.py with summarize_regions(rows), returning units and revenue totals keyed by region. Create out/test_metrics.py with a test proving two North rows sum to 5 units.",
+      "acceptance": [{"kind":"assert","spec":"{\"path\":\"out/metrics.py\",\"contains\":\"def summarize_regions\"}"},{"kind":"assert","spec":"{\"path\":\"out/test_metrics.py\",\"contains\":\"def test_summarize_regions\"}"}]
+    },
+    {
+      "task_id": "code-04-tier-router",
+      "shape": "multi_file_code",
+      "fixture": "phase0_fixtures",
+      "prompt": "Create out/tier_router.py with tier_for_complexity(value): map 1-2 to T1, 3-4 to T2, and 5 to T3; reject other values. Create out/test_tier_router.py with boundary tests.",
+      "acceptance": [{"kind":"assert","spec":"{\"path\":\"out/tier_router.py\",\"contains\":\"def tier_for_complexity\"}"},{"kind":"assert","spec":"{\"path\":\"out/test_tier_router.py\",\"contains\":\"def test_tier_for_complexity\"}"}]
+    },
+    {
+      "task_id": "code-05-path-containment",
+      "shape": "multi_file_code",
+      "fixture": "phase0_fixtures",
+      "prompt": "Create out/path_checks.py with is_within_root(root, candidate) based on resolved common paths and safe cross-drive handling. Create out/test_path_checks.py with inside and outside cases.",
+      "acceptance": [{"kind":"assert","spec":"{\"path\":\"out/path_checks.py\",\"contains\":\"def is_within_root\"}"},{"kind":"assert","spec":"{\"path\":\"out/test_path_checks.py\",\"contains\":\"def test_is_within_root\"}"}]
+    },
+    {
+      "task_id": "code-06-result-envelope",
+      "shape": "multi_file_code",
+      "fixture": "phase0_fixtures",
+      "prompt": "Create out/result_envelope.py with build_result(node_id, summary, artifacts) returning a versioned dictionary. Create out/test_result_envelope.py with a test for the schema_version and node_id fields.",
+      "acceptance": [{"kind":"assert","spec":"{\"path\":\"out/result_envelope.py\",\"contains\":\"def build_result\"}"},{"kind":"assert","spec":"{\"path\":\"out/test_result_envelope.py\",\"contains\":\"def test_build_result\"}"}]
+    },
+    {
+      "task_id": "code-07-report-format",
+      "shape": "multi_file_code",
+      "fixture": "phase0_fixtures",
+      "prompt": "Create out/report_format.py with format_summary(metrics) returning stable, sorted JSON text. Create out/test_report_format.py with a test that key order is stable.",
+      "acceptance": [{"kind":"assert","spec":"{\"path\":\"out/report_format.py\",\"contains\":\"def format_summary\"}"},{"kind":"assert","spec":"{\"path\":\"out/test_report_format.py\",\"contains\":\"def test_format_summary\"}"}]
+    },
+    {
+      "task_id": "code-08-split-gate",
+      "shape": "multi_file_code",
+      "fixture": "phase0_fixtures",
+      "prompt": "Create out/split_gate.py with decide_mode(steps, sequential, branches, read_heavy, disjoint_writes): single for sequential or steps <= 8, wide for at least 3 branches plus read-heavy or disjoint writes, otherwise single. Create out/test_split_gate.py with tests for all three outcomes.",
+      "acceptance": [{"kind":"assert","spec":"{\"path\":\"out/split_gate.py\",\"contains\":\"def decide_mode\"}"},{"kind":"assert","spec":"{\"path\":\"out/test_split_gate.py\",\"contains\":\"def test_decide_mode\"}"}]
+    },
+    {
+      "task_id": "pipeline-01-region-totals",
+      "shape": "data_pipeline",
+      "task_eligible_for_wide": true,
+      "fixture": "phase0_fixtures",
+      "prompt": "Read sales.csv and write out/region_totals.json with units and revenue totals for North, South, and East. Estimate the work first. Each region is an independent read-only aggregation; when the split gate permits wide execution, assign one branch per region and join the three results before writing the file. Use actual rows, not estimates.",
+      "acceptance": [{"kind":"schema","spec":"{\"path\":\"out/region_totals.json\",\"schema\":{\"type\":\"object\",\"properties\":{\"North\":{\"type\":\"object\",\"properties\":{\"units\":{\"type\":\"integer\"},\"revenue\":{\"type\":\"number\"}},\"required\":[\"units\",\"revenue\"]},\"South\":{\"type\":\"object\",\"properties\":{\"units\":{\"type\":\"integer\"},\"revenue\":{\"type\":\"number\"}},\"required\":[\"units\",\"revenue\"]},\"East\":{\"type\":\"object\",\"properties\":{\"units\":{\"type\":\"integer\"},\"revenue\":{\"type\":\"number\"}},\"required\":[\"units\",\"revenue\"]}},\"required\":[\"North\",\"South\",\"East\"]}}"},{"kind":"assert","spec":"{\"path\":\"out/region_totals.json\",\"json_path\":\"North.units\",\"equals\":5}"},{"kind":"assert","spec":"{\"path\":\"out/region_totals.json\",\"json_path\":\"North.revenue\",\"equals\":65.0}"},{"kind":"assert","spec":"{\"path\":\"out/region_totals.json\",\"json_path\":\"South.units\",\"equals\":5}"},{"kind":"assert","spec":"{\"path\":\"out/region_totals.json\",\"json_path\":\"South.revenue\",\"equals\":55.0}"},{"kind":"assert","spec":"{\"path\":\"out/region_totals.json\",\"json_path\":\"East.units\",\"equals\":3}"},{"kind":"assert","spec":"{\"path\":\"out/region_totals.json\",\"json_path\":\"East.revenue\",\"equals\":39.0}"}]
+    },
+    {
+      "task_id": "pipeline-02-sku-totals",
+      "shape": "data_pipeline",
+      "fixture": "phase0_fixtures",
+      "prompt": "Read sales.csv and write out/sku_totals.json with units and revenue totals keyed by SKU.",
+      "acceptance": [{"kind":"assert","spec":"{\"path\":\"out/sku_totals.json\",\"json_path\":\"A.units\",\"equals\":8}"},{"kind":"assert","spec":"{\"path\":\"out/sku_totals.json\",\"json_path\":\"B.revenue\",\"equals\":75.0}"}]
+    },
+    {
+      "task_id": "pipeline-03-date-totals",
+      "shape": "data_pipeline",
+      "fixture": "phase0_fixtures",
+      "prompt": "Read sales.csv and write out/date_totals.json with units grouped by date.",
+      "acceptance": [{"kind":"assert","spec":"{\"path\":\"out/date_totals.json\",\"json_path\":\"2026-01-01.units\",\"equals\":3}"},{"kind":"assert","spec":"{\"path\":\"out/date_totals.json\",\"json_path\":\"2026-01-03.units\",\"equals\":5}"}]
+    },
+    {
+      "task_id": "pipeline-04-purchase-summary",
+      "shape": "data_pipeline",
+      "fixture": "phase0_fixtures",
+      "prompt": "Read events.json and write out/purchase_summary.json with purchase count, amount total, and number of unique buyers.",
+      "acceptance": [{"kind":"assert","spec":"{\"path\":\"out/purchase_summary.json\",\"json_path\":\"purchase_count\",\"equals\":3}"},{"kind":"assert","spec":"{\"path\":\"out/purchase_summary.json\",\"json_path\":\"amount_total\",\"equals\":90}"},{"kind":"assert","spec":"{\"path\":\"out/purchase_summary.json\",\"json_path\":\"unique_buyers\",\"equals\":3}"}]
+    },
+    {
+      "task_id": "pipeline-05-signups-by-source",
+      "shape": "data_pipeline",
+      "fixture": "phase0_fixtures",
+      "prompt": "Read events.json and write out/signups.json with signup counts grouped by source.",
+      "acceptance": [{"kind":"assert","spec":"{\"path\":\"out/signups.json\",\"json_path\":\"social\",\"equals\":1}"},{"kind":"assert","spec":"{\"path\":\"out/signups.json\",\"json_path\":\"search\",\"equals\":1}"}]
+    },
+    {
+      "task_id": "pipeline-06-user-ages",
+      "shape": "data_pipeline",
+      "fixture": "phase0_fixtures",
+      "prompt": "Read users.json and write out/user_stats.json with user count, integer age sum, and average age.",
+      "acceptance": [{"kind":"assert","spec":"{\"path\":\"out/user_stats.json\",\"json_path\":\"count\",\"equals\":3}"},{"kind":"assert","spec":"{\"path\":\"out/user_stats.json\",\"json_path\":\"age_sum\",\"equals\":105}"},{"kind":"assert","spec":"{\"path\":\"out/user_stats.json\",\"json_path\":\"average_age\",\"equals\":35.0}"}]
+    },
+    {
+      "task_id": "pipeline-07-large-purchases",
+      "shape": "data_pipeline",
+      "fixture": "phase0_fixtures",
+      "prompt": "Read events.json and write out/large_purchases.json containing the count and total amount for purchases of at least 30.",
+      "acceptance": [{"kind":"assert","spec":"{\"path\":\"out/large_purchases.json\",\"json_path\":\"count\",\"equals\":2}"},{"kind":"assert","spec":"{\"path\":\"out/large_purchases.json\",\"json_path\":\"amount_total\",\"equals\":70}"}]
+    },
+    {
+      "task_id": "reason-01-queue-arithmetic",
+      "shape": "sequential_reasoning",
+      "fixture": "phase0_fixtures",
+      "prompt": "Solve puzzle 1 in puzzles.md. Show the sequence of operations and state the final remaining job count.",
+      "acceptance": [{"kind":"assert","spec":"{\"target\":\"response\",\"contains\":\"30\"}"}]
+    },
+    {
+      "task_id": "reason-02-box-rejections",
+      "shape": "sequential_reasoning",
+      "fixture": "phase0_fixtures",
+      "prompt": "Solve puzzle 2 in puzzles.md. Show each step and state the number of accepted items remaining in the first batch.",
+      "acceptance": [{"kind":"assert","spec":"{\"target\":\"response\",\"contains\":\"33\"}"}]
+    },
+    {
+      "task_id": "reason-03-parallel-schedule",
+      "shape": "sequential_reasoning",
+      "fixture": "phase0_fixtures",
+      "prompt": "Solve puzzle 3 in puzzles.md. Explain the dependency and parallel schedule, then give the earliest completion time in minutes.",
+      "acceptance": [{"kind":"assert","spec":"{\"target\":\"response\",\"contains\":\"21 minutes\"}"}]
+    },
+    {
+      "task_id": "reason-04-library-inventory",
+      "shape": "sequential_reasoning",
+      "fixture": "phase0_fixtures",
+      "prompt": "Solve puzzle 4 in puzzles.md. Compute available non-fiction books and explain the fraction steps.",
+      "acceptance": [{"kind":"assert","spec":"{\"target\":\"response\",\"contains\":\"60\"}"}]
+    },
+    {
+      "task_id": "reason-05-throughput",
+      "shape": "sequential_reasoning",
+      "fixture": "phase0_fixtures",
+      "prompt": "Solve puzzle 5 in puzzles.md. Account for the pause and calculate total processed records.",
+      "acceptance": [{"kind":"assert","spec":"{\"target\":\"response\",\"contains\":\"159\"}"}]
+    },
+    {
+      "task_id": "reason-06-table-capacity",
+      "shape": "sequential_reasoning",
+      "fixture": "phase0_fixtures",
+      "prompt": "Solve puzzle 6 in puzzles.md. Show remaining cells after removing columns and reserving cells.",
+      "acceptance": [{"kind":"assert","spec":"{\"target\":\"response\",\"contains\":\"97\"}"}]
+    },
+    {
+      "task_id": "reason-07-review-retries",
+      "shape": "sequential_reasoning",
+      "fixture": "phase0_fixtures",
+      "prompt": "Solve puzzle 7 in puzzles.md. Assume all three retries pass. Count initially completed reviews, then account for validation failures and retries.",
+      "acceptance": [{"kind":"assert","spec":"{\"target\":\"response\",\"contains\":\"40\"}"}]
+    }
+  ]
+}

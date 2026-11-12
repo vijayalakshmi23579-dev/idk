@@ -1,0 +1,12 @@
+**Task Worker Isolation**
+
+Task workers run with isolated query state — each worker maintains its own state separate from other workers and from the runtime query loop.
+
+**DAG Execution**
+
+A Task DAG can have at most eight nodes. Execution is split by operation type:
+
+- **Read-only workers** that are ready run concurrently.
+- **Writers** are serialized (one at a time).
+
+This means parallelism is available for independent read operations, while write operations are ordered to avoid conflicts.

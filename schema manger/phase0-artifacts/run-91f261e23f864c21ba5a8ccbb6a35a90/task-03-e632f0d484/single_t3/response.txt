@@ -1,0 +1,12 @@
+**Deterministic Split-Gate Conditions (per `architecture.md`)**
+
+**Single-agent (default) execution** — one agent is used when any of the following holds:
+- No step estimate is supplied, **or**
+- The work is sequential, **or**
+- The estimated step count is **at most eight** (step threshold: **≤ 8 steps**)
+
+**Wide execution** — requires **all** of the following:
+- At least **three independent branches** (branch requirement: **≥ 3 branches**), **and**
+- The work is read-heavy **or** involves disjoint writes (no conflicting writer serialization)
+
+So the step threshold for staying single-agent is **8 estimated steps**, and the branch requirement for going wide is **≥ 3 independent branches** combined with read-heavy or disjoint-write work.

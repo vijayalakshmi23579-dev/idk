@@ -1,0 +1,14 @@
+I'll examine the workspace files to understand the context and find the relevant information.
+
+
+Based on `architecture.md` (line 15) in the workspace:
+
+**Provider-visible in tool schemas:**
+- Descriptions
+- Parameters
+
+**Two deferred/prompt behaviors that must not be claimed as provider-visible:**
+1. Tool prompt guidance
+2. Deferred-schema loading
+
+The document states: *"Tool schemas currently include descriptions and parameters. Tool prompt guidance and deferred-schema loading are not provider-visible behaviors."*

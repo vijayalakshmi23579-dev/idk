@@ -1,0 +1,9 @@
+Based on `architecture.md` (line 15):
+
+**Provider-visible in tool schemas:** descriptions and parameters only.
+
+**Two deferred/prompt behaviors that must not be claimed as provider-visible:**
+1. Tool prompt guidance
+2. Deferred-schema loading
+
+The document explicitly states: *"Tool schemas currently include descriptions and parameters. Tool prompt guidance and deferred-schema loading are not provider-visible behaviors."*

@@ -1,0 +1,18 @@
+{
+  "task_id": "research-07-phase0-metrics",
+  "shape": "breadth_research",
+  "baseline": "single_t2",
+  "model_id": "nvidia_nim/nvidia/nemotron-3.5-lightning-30b-a3b",
+  "checks_passed": false,
+  "quality_score": 0.0,
+  "tokens": 6019,
+  "api_calls": 8,
+  "task_invocations": 0,
+  "child_api_calls": 0,
+  "child_provider_attempts": 0,
+  "child_model_ids": [],
+  "task_worker_count": 0,
+  "task_worker_successes": 0,
+  "task_worker_failures": 0,
+  "duration_seconds": 11.065310578999743
+}

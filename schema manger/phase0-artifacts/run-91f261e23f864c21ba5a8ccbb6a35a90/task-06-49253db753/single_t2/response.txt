@@ -1,0 +1,28 @@
+**Current provider‑reliability controls (as documented in `architecture.md`)**
+
+| Control | What it does |
+|---------|--------------|
+| **Bounded concurrency** | The system limits how many provider calls can be in flight at the same time. This prevents a single task from overwhelming the transport layer or the downstream service. |
+| **Retry / fallback behavior** | If a provider call fails (timeout, 5xx, etc.) the runtime automatically retries according to a short‑circuit policy and can fall back to a secondary provider when configured. |
+| **Task‑contract budgets** | Individual nodes in a Task DAG can declare a per‑node budget (tokens, calls, latency). These are *internal* bookkeeping limits, not provider‑level quotas. |
+| **Permission / path gates** | Application‑level safeguards that prevent unauthorized filesystem access – unrelated to provider limits. |
+
+**Quota limits that are *still missing***  
+
+| Missing limit | Why it matters | Current status |
+|---------------|----------------|----------------|
+| **RPM – Requests‑Per‑Minute** | Prevents a burst of calls from exhausting the provider’s rate allowance and triggering throttling or billing surprises. | *Not enforced* (architecture.md line 11 explicitly states “RPM and TPM quotas are not enforced”). |
+| **TPM – Tokens‑Per‑Minute** | Controls the total token volume sent to a provider each minute; essential for models that charge per‑token and for avoiding context‑window overflows. | *Not enforced*. |
+| **Daily or monthly aggregate caps** | Many providers impose a higher‑level quota (e.g., 1 M tokens per month). Without enforcement a runaway job could exceed the account’s allowance. | *Absent* from the evidence pack. |
+| **Per‑model or per‑endpoint limits** | Some endpoints (e.g., “gpt‑4‑turbo” vs “gpt‑3.5‑turbo”) have separate RPM/TPM caps. | *Not tracked*. |
+| **Burst‑size allowance** | A short‑term allowance above the sustained RPM (e.g., “burst of 10 req for 5 s”) that some APIs expose. | *Not present*. |
+| **Error‑backoff / cool‑down periods** | After a certain number of failures, a forced pause to avoid hammering a failing endpoint. | *Missing*; only a generic retry policy is documented. |
+
+**What to do next**
+
+1. **Add explicit RPM/TPM enforcement** – either by instrumenting the provider‑call wrapper to count calls/tokens per minute and abort or throttle when the limit is reached, or by integrating with the provider’s own quota API (if available).  
+2. **Define aggregate daily/monthly caps** and surface them in the Task‑contract budget field so workers can respect them.  
+3. **Introduce per‑model/endpoint quota tables** so the runtime can select the appropriate limits based on the model ID.  
+4. **Add burst‑size and error‑backoff policies** to complement the existing retry/fallback behavior.  
+
+These additions will close the gap between the current “bounded concurrency + retry” safety net and a fully‑featured provider‑reliability model that protects against over‑running rate limits and unexpected billing.

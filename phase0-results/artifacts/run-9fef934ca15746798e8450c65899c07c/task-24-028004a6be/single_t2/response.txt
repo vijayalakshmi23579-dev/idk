@@ -1,0 +1,14 @@
+**Puzzle 1 – Sequential Reasoning**
+
+**Initial state**  
+- Queued jobs: **48**
+
+**Step‑by‑step operations**
+
+| Step | Operation | Result |
+|------|-----------|--------|
+| 1 | Complete **one third** of the jobs | \( \frac{1}{3} \times 48 = 16\) jobs finished<br>Remaining: \(48 - 16 = 32\) |
+| 2 | **Receive 7 more** jobs | \(32 + 7 = 39\) jobs now in the queue |
+| 3 | **Complete 9** jobs | \(39 - 9 = 30\) jobs left |
+
+**Final remaining job count**: **30** jobs.

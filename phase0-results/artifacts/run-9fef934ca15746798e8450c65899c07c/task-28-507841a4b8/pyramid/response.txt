@@ -1,0 +1,12 @@
+Puzzle 5 states: *"A worker processes 18 records per minute for 7 minutes, pauses for 4 minutes, then processes 11 per minute for 3 minutes. How many records are processed?"*
+
+Calculation:
+- First burst: 18 records/min × 7 min = **126 records**
+- Pause: 4 minutes → **0 records processed** (pauses contribute nothing)
+- Second burst: 11 records/min × 3 min = **33 records**
+
+Total processed records: 126 + 33 = **159 records**
+
+This is a single straightforward computation (well under eight steps, no independent branches), so the split-gate conditions for wide Task execution are not met and I solved it directly.
+
+**Answer: 159 total processed records**

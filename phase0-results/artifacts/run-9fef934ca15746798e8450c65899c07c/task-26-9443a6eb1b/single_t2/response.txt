@@ -1,0 +1,26 @@
+**Puzzle 3 – “Three jobs take 8, 13, and 5 minutes.”**
+
+### Dependency & parallel schedule
+| Job | Length | Dependencies | Parallelism |
+|-----|--------|--------------|-------------|
+| **Job A** | 8 min | – (starts at time 0) | – |
+| **Job B** | 13 min | **must start after Job A finishes** (the 13‑minute job cannot begin until the 8‑minute job is complete) | – |
+| **Job C** | 5 min | – (independent) | runs **in parallel with both** A and B – it can start at time 0 and continue while A and B are executing |
+
+### How the schedule works
+1. **Time 0 – 8 min:**  
+   - Job A runs.  
+   - Job C also starts at time 0 and runs for its 5 min, finishing at **5 min**.
+
+2. **Time 8 – 21 min:**  
+   - Job A has completed, so Job B may now start (it needs the full 13 min, ending at **21 min**).  
+   - Job C is already finished, but even if it were allowed to overlap, it would simply be idle after 5 min.
+
+3. **Overall finish:**  
+   - Job B is the last job to complete, at **21 min**.  
+   - Job C finishes much earlier (5 min) and does not extend the critical path.
+
+### Earliest completion time
+Because the only precedence constraint is **A → B**, and the 5‑minute job C can run in parallel without delaying A or B, the whole set of jobs finishes when B ends.
+
+**Earliest completion time = 21 minutes.**

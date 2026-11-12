@@ -1,0 +1,31 @@
+I'll start by reading all the fixture files to understand the current state of provider reliability controls and quota limits.
+
+
+Based on my review of all fixture files, here is the summary:
+
+## Current Provider Reliability Controls
+
+From `architecture.md`, the following provider reliability controls are currently in place:
+
+1. **Bounded concurrency** — Provider calls have bounded concurrency limits.
+2. **Retry behavior** — Failed provider calls are retried.
+3. **Fallback behavior** — Fallback behavior is available when provider calls fail.
+
+These are stated together in line 11: *"Provider calls have bounded concurrency and retry/fallback behavior."*
+
+No other provider-specific reliability controls (e.g., circuit breakers, rate limiting, timeouts, bulkheading, or deferred-schema loading) are described as active. Line 15 also notes that *"Tool prompt guidance and deferred-schema loading are not provider-visible behaviors."*
+
+## Missing Quota Limits
+
+Line 11 of `architecture.md` explicitly states:
+
+> **RPM and TPM quotas are not enforced.**
+
+Specifically missing:
+
+| Quota Limit | Status |
+|-------------|--------|
+| **RPM (Requests Per Minute)** | Not enforced — no request-rate quota is applied to provider calls |
+| **TPM (Tokens Per Minute)** | Not enforced — no token-rate quota is applied to provider calls |
+
+These are the two quota limits that are explicitly identified as missing from the current provider reliability controls.

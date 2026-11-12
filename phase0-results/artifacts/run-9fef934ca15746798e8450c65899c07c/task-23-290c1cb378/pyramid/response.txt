@@ -1,0 +1,5 @@
+Done. I read `events.json`, found 2 purchases with amount >= 30 (alice: 30, cara: 40), and wrote `/tmp/phase0-case-xmcfbzje/out/large_purchases.json` containing:
+
+```json
+{"count": 2, "total": 70}
+```

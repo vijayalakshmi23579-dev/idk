@@ -1,0 +1,11 @@
+{
+  "task_id": "reason-01-queue-arithmetic",
+  "shape": "sequential_reasoning",
+  "baseline": "pyramid",
+  "model_id": "nvidia_nim/nvidia/nemotron-3.5-super-vl-120b-a12b",
+  "checks_passed": true,
+  "quality_score": 1.0,
+  "tokens": 6662,
+  "api_calls": 2,
+  "duration_seconds": 4.831365850001021
+}

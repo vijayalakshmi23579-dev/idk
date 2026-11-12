@@ -1,0 +1,15 @@
+**Task‑worker isolation & DAG execution (from `architecture.md`)**
+
+| Aspect | What the spec says |
+|--------|--------------------|
+| **Isolation** | *Task workers have isolated query state.* Each worker owns its own copy of the conversation / query context, so they do not share mutable state unless explicitly coordinated. |
+| **DAG size limit** | *A Task DAG can have at most eight nodes.* If a DAG would exceed eight nodes, the deterministic split gate collapses to a single agent or serial execution. |
+| **Read‑only scheduling** | *Ready read‑only workers run concurrently.* Workers that only need read‑access to shared data can proceed in parallel without blocking each other. |
+| **Writer scheduling** | *Writers are serialized.* Any worker that performs a write must acquire exclusive access; subsequent writers wait until the current writer finishes, preventing write‑write conflicts. |
+| **Scheduling distinction** | The system therefore differentiates two classes of ready workers: <br>1. **Read‑only workers** → can be dispatched simultaneously.<br>2. **Writer workers** → are queued and executed one‑at‑a‑time. <br> This distinction lets the runtime maximise concurrency for read‑heavy work while preserving consistency for mutations. |
+| **Wide‑execution rule (optional context)** | Wide execution (i.e., many parallel branches) requires *at least three independent branches* **and** either read‑heavy work or disjoint writes. If those conditions aren’t met, the split gate defaults to a single agent or sequential flow, keeping the DAG within the eight‑node limit. |
+
+**In short:**  
+- Each task worker works in its own isolated state space.  
+- The DAG is capped at **8 nodes**.  
+- **Read‑only** workers may run **concurrently**, while **writers** are **serialized** to avoid contention, giving a clear read/write scheduling separation.

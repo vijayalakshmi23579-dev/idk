@@ -1,0 +1,17 @@
+I'll start by examining the fixture files to understand the data structure before creating the metrics module.
+
+
+This is a small, well-defined task: create two files in an `out/` directory. It's well under eight steps and only two independent writes, so I'll complete it directly without the Task tool.
+
+Let me create the `out/metrics.py` and `out/test_metrics.py` files.
+
+
+Both files have been created successfully.
+
+**Summary of work:**
+
+- **`out/metrics.py`** — defines `summarize_regions(rows)`, which iterates over rows (dicts with `region`, `units`, and `revenue` keys) and returns a dict keyed by region, each containing `units` and `revenue` totals.
+
+- **`out/test_metrics.py`** — defines `test_two_north_rows_sum_to_5_units()`, which passes two North rows (2 units + 3 units) through `summarize_regions` and asserts `result["North"]["units"] == 5`.
+
+This was a small, self-contained task (well under eight steps, only two disjoint file writes), so I completed it directly rather than invoking the Task tool.

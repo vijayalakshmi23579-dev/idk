@@ -1,0 +1,25 @@
+## Puzzle 3 Solution
+
+**Puzzle:** Three jobs take 8, 13, and 5 minutes. The 13-minute job starts after the 8-minute job; the 5-minute job runs in parallel with both. What is the earliest completion time?
+
+### Dependency Graph
+- **Job A (8 min)** → **Job B (13 min)**: Job B has a hard dependency on Job A; it cannot start until Job A finishes.
+- **Job C (5 min)**: Independent of both A and B; runs in parallel with them.
+
+### Parallel Schedule
+| Time | Job A (8 min) | Job B (13 min) | Job C (5 min) |
+|------|--------------|----------------|---------------|
+| 0–5  | Running      | — (blocked)    | Running       |
+| 5–8  | Running      | — (blocked)    | ✅ Done at 5  |
+| 8–21 | ✅ Done at 8 | Running        | —             |
+
+- At minute 0, Job A and Job C start concurrently.
+- Job C finishes at minute 5 (well before the others).
+- Job A finishes at minute 8, unblocking Job B.
+- Job B runs from minute 8 to minute 21.
+
+### Critical Path
+The dependency chain **A → B** is the critical path: 8 + 13 = **21 minutes**. Job C (5 min) is fully hidden in parallel and does not extend the schedule.
+
+### Earliest Completion Time
+**21 minutes**

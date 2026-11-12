@@ -1,0 +1,19 @@
+**Puzzle 2: “A batch has 5 boxes with 12 items each. Four items are rejected from every box and 7 accepted items are moved to a second batch. How many accepted items remain in the first batch?”**
+
+**Step‑by‑step reasoning**
+
+1. **Initial total items**  
+   - There are 5 boxes, each containing 12 items.  
+   - Total items = 5 × 12 = 60 items.
+
+2. **Reject 4 items from every box**  
+   - From each box: 12 – 4 = 8 accepted items remain.  
+   - Accepted items across all boxes = 5 × 8 = 40 accepted items.
+
+3. **Move 7 accepted items to a second batch**  
+   - These 7 items are taken from the first batch.  
+   - Accepted items left in the first batch = 40 – 7 = 33.
+
+**Result**
+
+- **Number of accepted items remaining in the first batch:** **33**.

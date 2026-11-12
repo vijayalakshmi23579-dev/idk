@@ -1,0 +1,5 @@
+Done. I read `events.json`, identified the three purchase events (alice: $30, bob: $20, cara: $40), and wrote `/tmp/phase0-case-s60t_08x/out/purchase_summary.json` with:
+
+- **purchase_count**: 3
+- **amount_total**: 90
+- **unique_buyers**: 3

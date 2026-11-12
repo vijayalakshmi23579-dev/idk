@@ -1,0 +1,7 @@
+Puzzle 5 calculation:
+
+- First phase: 18 records/minute × 7 minutes = **126 records**
+- Pause: 4 minutes = **0 records** (no processing occurs)
+- Second phase: 11 records/minute × 3 minutes = **33 records**
+
+**Total processed records = 126 + 0 + 33 = 159**

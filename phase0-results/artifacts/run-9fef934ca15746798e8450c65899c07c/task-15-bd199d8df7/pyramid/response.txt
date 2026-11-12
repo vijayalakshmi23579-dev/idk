@@ -1,0 +1,18 @@
+I'll start by checking the workspace structure.
+
+
+This is a small task (2 steps) with sequential dependency, so I'll complete it directly rather than using Task. Let me first check if the `out` directory exists.
+
+
+I'll create the `out` directory files directly. First, let me create `out/report_format.py`:
+
+
+Now creating `out/test_report_format.py`:
+
+
+Done. I created both files directly since the task was small (2 steps) with sequential dependency:
+
+- **`out/report_format.py`** — `format_summary(metrics)` returns `json.dumps(metrics, sort_keys=True)`, producing stable, sorted JSON text.
+- **`out/test_report_format.py`** — A test that calls `format_summary` twice on the same unordered dict and asserts the output is identical (stable key order), and also matches `json.dumps(metrics, sort_keys=True)`.
+
+No `Task` was needed because this didn't meet the split-gate conditions (not more than eight steps, and it had sequential dependency).

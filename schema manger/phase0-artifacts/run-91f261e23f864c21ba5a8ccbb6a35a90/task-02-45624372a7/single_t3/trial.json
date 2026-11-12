@@ -1,0 +1,18 @@
+{
+  "task_id": "research-02-worker-isolation",
+  "shape": "breadth_research",
+  "baseline": "single_t3",
+  "model_id": "nvidia_nim/nvidia/nemotron-3.5-super-vl-120b-a12b",
+  "checks_passed": true,
+  "quality_score": 1.0,
+  "tokens": 4981,
+  "api_calls": 3,
+  "task_invocations": 0,
+  "child_api_calls": 0,
+  "child_provider_attempts": 0,
+  "child_model_ids": [],
+  "task_worker_count": 0,
+  "task_worker_successes": 0,
+  "task_worker_failures": 0,
+  "duration_seconds": 4.845258571999693
+}

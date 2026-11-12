@@ -1,0 +1,8 @@
+The signup counts grouped by source from `events.json` are:
+
+```json
+{
+  "social": 1,
+  "search": 1
+}
+```
