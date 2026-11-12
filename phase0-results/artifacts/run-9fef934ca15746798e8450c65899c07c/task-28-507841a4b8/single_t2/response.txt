@@ -1,0 +1,7 @@
+Puzzle 5: The worker processes records in two active periods and pauses in between.
+
+- First period: 18 records/minute × 7 minutes = **126** records  
+- Pause: 4 minutes → 0 records  
+- Second period: 11 records/minute × 3 minutes = **33** records  
+
+Total processed records = 126 + 33 = **159**.

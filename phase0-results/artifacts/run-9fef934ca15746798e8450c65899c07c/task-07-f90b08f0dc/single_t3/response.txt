@@ -1,0 +1,19 @@
+# Phase 0 Report Measurements
+
+Based on the `architecture.md` evidence pack, a Phase 0 report should capture the following measurements:
+
+1. **Success checks**
+2. **Quality**
+3. **Tokens**
+4. **Calls**
+5. **Latency**
+6. **Model IDs**
+7. **Optional cost**
+8. **Human review**
+
+## How Unknown Prices Are Represented
+
+Unknown prices are represented as **`null`**. The architecture document states that cost is optional, and when a price is not available, it remains `null` rather than being estimated, omitted, or defaulted to zero.
+
+Source: `/tmp/phase0-case-hzar6qq0/architecture.md`, line 14:
+> "Phase 0 reports include success checks, quality, tokens, calls, latency, model IDs, optional cost, and human review. Unknown prices remain null."

@@ -1,0 +1,14 @@
+## Deterministic Split-Gate Conditions
+
+**Single-Agent Execution** (default — one agent):
+Triggered when any of the following holds:
+- No step estimate is supplied, **or**
+- Work is sequential, **or**
+- Estimated steps are **at most eight** (step threshold ≤ 8)
+
+**Wide Execution**:
+Requires **all** of the following:
+- At least **three independent branches** (branch requirement ≥ 3)
+- **And** read-heavy work **or** disjoint writes
+
+*Source: architecture.md, line 10 — "The deterministic split gate defaults to one agent when no estimate is supplied, work is sequential, or estimated steps are at most eight. Wide execution requires at least three independent branches and read-heavy work or disjoint writes."*

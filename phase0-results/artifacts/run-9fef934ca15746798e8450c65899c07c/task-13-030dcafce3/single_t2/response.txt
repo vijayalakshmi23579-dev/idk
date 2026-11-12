@@ -1,0 +1,16 @@
+The two files have been created as requested:
+
+**`/tmp/phase0-case-z1gd395u/out/path_checks.py`**
+- Implements `is_within_root(root, candidate)` that resolves both paths with `os.path.realpath`, handles cross‑drive safety (Windows drive‑letter check), and returns `True` only when the candidate lies inside (or equals) the root directory.
+
+**`/tmp/phase0-case-z1gd395u/out/test_path_checks.py`**
+- Imports `is_within_root` and tests it against a set of inside cases (fixture files under the project root) and outside cases (parent directories, unrelated absolute paths, cross‑drive paths, etc.).
+- Prints PASS/FAIL for each case and reports overall success.
+
+You can run the tests with:
+
+```bash
+python /tmp/phase0-case-z1gd395u/out/test_path_checks.py
+```
+
+All inside cases should PASS and all outside cases should FAIL (i.e., return `False`), confirming the function works correctly.

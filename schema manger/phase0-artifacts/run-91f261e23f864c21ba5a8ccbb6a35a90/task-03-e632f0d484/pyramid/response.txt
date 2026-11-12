@@ -1,0 +1,23 @@
+## Deterministic Split-Gate Conditions
+
+The split-gate decides whether the work is handled by a **single agent** or via **wide execution** (the `Task` tool spawning parallel branches).
+
+### Wide Execution (Task) — required conditions (all must hold)
+
+| Condition | Threshold / Requirement |
+|---|---|
+| Step threshold | **More than eight steps** (`estimated_steps > 8`) |
+| Sequential dependency | **None** (`sequential_dependency == false`) |
+| Independent branches | **At least three** (`independent_branches >= 3`, capped at 8) |
+| Work character | Branches must be **read-heavy** OR have **disjoint writes** (non-overlapping declared `write_files`) |
+
+### Single-Agent Execution — default when any wide condition fails
+
+- **8 or fewer steps** (`estimated_steps <= 8`), OR
+- A **sequential dependency** exists between steps, OR
+- **Fewer than three** independent branches, OR
+- Work is neither read-heavy nor disjoint-write in nature
+
+### Application to this case
+
+No actual file work was requested — only a statement of the gate conditions — so there is nothing to decompose into branches, no file scopes to declare, and no `Task` invocation is warranted. The correct action is to answer directly, as done above.

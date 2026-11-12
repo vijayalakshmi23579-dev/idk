@@ -1,0 +1,10 @@
+Work estimate: 1 step, single sequential conceptual answer. Split-gate conditions do not hold (not >8 steps, not independent read-heavy/disjoint branches), so I answer directly without `Task`. No shell commands are used.
+
+**Application-level filesystem/permission safeguards vs. OS isolation**
+
+- **Application-level safeguards** are enforced inside the program/runtime (e.g., path allowlists, ".." rejection, permission checks in application logic, restricted-shell policies). They run in the same OS process/user context, so they are only as strong as the application; an interpreter bug, escape hatch, or logic flaw can void them entirely.
+- **OS isolation** is enforced by the kernel outside the application (e.g., mount/PID/UTS/IPC/network/user namespaces, `chroot`/`pivot_root`, cgroups, seccomp-bpf, SELinux/AppArmor, containers, VMs). A compromise of the application does not by itself break the OS boundary.
+
+**What must not be claimed about Bash sandboxing**
+
+Bash — including restricted Bash (`rbash`) — is a command interpreter, not a sandbox, and it does not provide OS isolation. You must not claim that running a command in Bash confines it to a restricted filesystem, prevents access to other files/resources, or creates a security boundary comparable to namespaces/containers/seccomp. Any Bash-level restrictions are application-layer and bypassable (e.g., by invoking other interpreters, escaping restricted mode, or using `exec`/scripting escapes), so Bash sandboxing must not be equated with OS-level isolation.

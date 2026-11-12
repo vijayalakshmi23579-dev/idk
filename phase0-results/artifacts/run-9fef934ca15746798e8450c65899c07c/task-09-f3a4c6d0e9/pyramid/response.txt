@@ -1,0 +1,9 @@
+The task requires two steps: creating `out/name_utils.py` and `out/test_name_utils.py`. This is only two steps, not more than eight, so the split-gate conditions for parallel execution do not hold. I will complete the task directly by writing both files.
+
+
+Both files created successfully:
+
+- `/tmp/phase0-case-_2ru9t0u/out/name_utils.py` — defines `normalize_name(value)` which trims whitespace, collapses internal whitespace, and casefolds.
+- `/tmp/phase0-case-_2ru9t0u/out/test_name_utils.py` — contains a focused test asserting `normalize_name("  Ada   LOVELACE ")` equals `"ada lovelace"`.
+
+This was only two steps with shared state (the `out/` directory and module under test), so it did not meet the split-gate conditions (more than eight steps, no sequential dependency, and at least three independent branches), and was completed directly without `Task`.

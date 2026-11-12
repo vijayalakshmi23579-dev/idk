@@ -1,0 +1,8 @@
+Now let me run the test to verify everything works:
+
+
+Both files have been created successfully:
+
+1. **`out/csv_tools.py`** — Contains `parse_rows(text)` using Python's `csv` module (`csv.DictReader` via `StringIO`), converting `units` to `int` and `revenue` to `float`.
+
+2. **`out/test_csv_tools.py`** — Contains `TestParseRows.test_two_row_input` that validates parsing of a two-row CSV input, checking exact values and types (`int` for units, `float` for revenue).

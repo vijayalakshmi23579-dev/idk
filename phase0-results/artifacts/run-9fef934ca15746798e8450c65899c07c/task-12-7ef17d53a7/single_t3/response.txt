@@ -1,0 +1,16 @@
+I've reviewed the workspace. Now I'll create the `out` directory and both required files.
+
+
+Both files have been created successfully:
+
+**`out/tier_router.py`** — Contains `tier_for_complexity(value)`:
+- Maps 1–2 → `"T1"`, 3–4 → `"T2"`, 5 → `"T3"`
+- Raises `ValueError` for integers outside 1–5
+- Raises `TypeError` for non-integer types (including booleans, floats, strings, None)
+
+**`out/test_tier_router.py`** — Contains boundary tests via `unittest`:
+- Valid mappings for all boundary values (1, 2, 3, 4, 5)
+- Rejection tests for 0, 6, negative numbers
+- Type rejection tests for floats, strings, booleans, and None
+
+Note: I don't have a shell/Bash tool available in this environment, so I couldn't execute the test suite directly, but the files are syntactically correct and follow standard `unittest` conventions. You can run them with `python -m unittest out/test_tier_router.py` (from the workspace directory) or `python out/test_tier_router.py`.

@@ -1,0 +1,14 @@
+{
+  "East": {
+    "units": 3,
+    "revenue": 39.0
+  },
+  "North": {
+    "units": 5,
+    "revenue": 65.0
+  },
+  "South": {
+    "units": 5,
+    "revenue": 55.0
+  }
+}

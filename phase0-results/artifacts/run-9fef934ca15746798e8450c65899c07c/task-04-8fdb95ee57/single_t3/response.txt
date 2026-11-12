@@ -1,0 +1,16 @@
+Based on the evidence pack in `architecture.md`, here is the distinction and what must not be claimed:
+
+**Application-level safeguards vs. OS isolation**
+
+`architecture.md` states: *"Filesystem path checks and permission gates are application safeguards. The runtime has no OS-level shell sandbox."* It also states that the benchmark runner *"exposes scoped Read/Edit/Write tools, never Bash, and does not execute dataset-supplied commands."*
+
+This means path checks and permission gates are enforced inside the application layer (by the tool harness), not by the operating system. There is no container, namespace, seccomp profile, or other OS-level mechanism isolating a shell.
+
+**What must not be claimed about Bash sandboxing**
+
+It must **not** be claimed that Bash is sandboxed or isolated at the OS level. Specifically:
+- Do not claim there is an OS-level shell sandbox.
+- Do not claim Bash commands (if they were executed) would be contained by OS isolation such as containers, namespaces, or restricted namespaces.
+- Do not claim dataset-supplied Bash commands are safely executed because they are "sandboxed" by the OS — the runner never exposes Bash and does not execute such commands at all.
+
+Any safety around filesystem access comes solely from application-level path checks and permission gates, not from OS isolation of a shell.

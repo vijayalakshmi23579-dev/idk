@@ -1,0 +1,18 @@
+**Phase 0 Report Measurements**
+
+A Phase 0 report is expected to capture the following metrics for each task/run:
+
+| Measurement | What It Captures |
+|-------------|------------------|
+| **Success checks** | Whether the task completed without errors or failures. |
+| **Quality** | Assessment of output quality (e.g., correctness, relevance, fidelity to input). |
+| **Tokens** | Number of input and/or generated tokens consumed. |
+| **Calls** | Count of external provider/Tool invocations performed. |
+| **Latency** | Time taken for the task to complete (typically measured from start to finish). |
+| **Model IDs** | Identifier(s) of the model(s) used for the run. |
+| **Optional cost** | Estimated or actual monetary cost, if available. |
+| **Human review** | Flag or notes indicating whether a human reviewer examined the result. |
+
+**Unknown prices**
+
+The benchmark specification states that when a price (cost) cannot be determined—e.g., the provider does not expose pricing, the request falls outside known rate tables, or the cost is otherwise unavailable—the cost field is represented as **`null`**. This allows the report to record the absence of a price without forcing a spurious numeric value, and downstream consumers can treat `null` as “price unknown” rather than zero or missing.

@@ -1,0 +1,32 @@
+## Summary: Task Worker Isolation and DAG Execution
+
+### Worker Isolation
+
+Each Task worker is a scoped, bounded unit of work defined by a `TaskSpec`. Isolation is enforced through explicit declaration rather than implicit ambient access:
+
+- **Instruction**: A focused instruction (1–20,000 characters) bounds the worker's objective.
+- **Exact file scopes**: `read_files` and `write_files` are declared project-relative paths; the worker may only inspect declared inputs and produce declared outputs.
+- **Per-node budget**: Each node carries its own `TaskBudget` — `max_tokens` (default 8,000), `max_calls` (default 8, hard cap 32), `max_seconds` (default 120, hard cap 1,800), and `max_tool_errors` (default 3, hard cap 20). One worker cannot exhaust the whole job's resources.
+- **Contract**: `non_goals` explicitly excludes out-of-scope work; an optional `output_schema` requires structured output; `acceptance` checks (kind `"exists"`) must target paths listed in `write_files`, making verification deterministic.
+- **Complexity/tier**: `complexity` (1–5, default 3) and optional `tier_hint` (T1/T2/T3) guide scheduling intensity.
+
+### DAG Execution
+
+Workers are wired into a directed acyclic graph through the `needs` field, which lists the IDs of predecessor tasks whose outputs are required. Execution semantics:
+
+- A node runs only after all tasks in its `needs` have completed (dependency resolution).
+- Nodes without unsatisfied dependencies are eligible to run, enabling parallel execution of independent branches.
+- The `estimate` (`SplitEstimate`) drives the deterministic split gate: it declares `estimated_steps`, whether there is `sequential_dependency`, the count of `independent_branches` (0–8), whether the work is `read_heavy` (mostly inspection), whether `disjoint_writes` holds (non-overlapping write scopes), and whether `uncertain_steps` may change the plan.
+- Without an `estimate`, the runtime stays single-agent (no split).
+
+### Node Limit
+
+The DAG accepts **1 to 8 tasks** (`minItems: 1`, `maxItems: 8`). No more than eight worker nodes may be declared in a single Task invocation.
+
+### Read/Write Scheduling Distinction
+
+- **Read side (`read_files`, `read_heavy`)**: Declared inputs the worker inspects or analyzes. Read-heavy branches do not mutate state and can safely run concurrently with other readers.
+- **Write side (`write_files`, `disjoint_writes`)**: Declared outputs the worker produces. `disjoint_writes: true` asserts that write scopes are non-overlapping, which is what permits independent branches to execute in parallel without write conflicts; overlapping writes would serialize or conflict.
+- Acceptance `exists` checks are scoped to `write_files`, so completion is verified against the declared output manifest.
+
+Note: your actual request is a summary of this mechanism (a short, single-agent explanation), not a multi-step file-processing job, so it does not meet the split-gate conditions (it is well under eight steps and is not branch-based file work). It is therefore completed directly above rather than delegated to Task workers.

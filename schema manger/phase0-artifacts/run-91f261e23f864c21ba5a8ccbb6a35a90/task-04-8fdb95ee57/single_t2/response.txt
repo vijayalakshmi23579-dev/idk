@@ -1,0 +1,7 @@
+**What must not be claimed about Bash sandboxing**
+
+- Bash sandboxing does **not** provide operating‑system‑level isolation.  
+- It cannot be claimed to enforce OS‑level file‑system permissions or to protect against system‑wide threats.  
+- Any assertion that a Bash sandbox “acts like an OS sandbox” or “guarantees isolation beyond the application’s own checks” is false.  
+
+In short, Bash sandboxing is only an **application‑level safeguard**; it must never be presented or relied upon as a substitute for genuine OS isolation.

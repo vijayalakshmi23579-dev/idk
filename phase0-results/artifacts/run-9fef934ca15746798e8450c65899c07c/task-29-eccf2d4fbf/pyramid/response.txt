@@ -1,0 +1,9 @@
+Puzzle 6: A rectangular table has 9 rows and 14 columns. Two complete columns are removed, then 11 cells are reserved. How many unreserved cells remain?
+
+Step-by-step:
+1. Initial cells: 9 rows × 14 columns = 126 cells
+2. Remove 2 complete columns: 2 columns × 9 rows = 18 cells removed
+3. Remaining cells: 126 − 18 = 108 cells (equivalently, 9 × 12 = 108)
+4. Reserve 11 cells: 108 − 11 = 97 unreserved cells
+
+**Answer: 97 unreserved cells remain.**

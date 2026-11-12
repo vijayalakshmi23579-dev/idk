@@ -1,0 +1,13 @@
+I'll check the workspace files, especially architecture.md, to see if this information is documented there.
+
+
+Based on the architecture.md fixture (line 15):
+
+**Provider-visible in tool schemas:**
+- Descriptions and parameters
+
+**Two deferred/prompt behaviors that must not be claimed as provider-visible:**
+1. Tool prompt guidance
+2. Deferred-schema loading
+
+These are explicitly stated as *not* provider-visible behaviors in the benchmark notes.

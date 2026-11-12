@@ -1,0 +1,18 @@
+## Phase 0 Report Measurements
+
+Based on the evidence pack in `puzzles.md`, a Phase 0 report should capture the following measurements:
+
+1. **Success checks** — whether the case succeeded
+2. **Quality** — qualitative or scored assessment of output quality
+3. **Tokens** — token usage
+4. **Calls** — number of provider/tool calls
+5. **Latency** — response time
+6. **Model IDs** — identifiers of the models used
+7. **Optional cost** — cost when pricing is known
+8. **Human review** — human evaluation outcome
+
+## How Unknown Prices Are Represented
+
+Unknown prices are represented as **`null`**. Specifically, the documentation states: *"Phase 0 reports include success checks, quality, tokens, calls, latency, model IDs, optional cost, and human review. Unknown prices remain null."*
+
+This means when a price cannot be determined, the cost field is omitted or left as `null` rather than being estimated or zeroed out.

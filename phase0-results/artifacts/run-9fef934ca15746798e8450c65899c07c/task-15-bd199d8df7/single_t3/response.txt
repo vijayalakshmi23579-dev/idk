@@ -1,0 +1,7 @@
+Both files have been created successfully:
+
+1. **`out/report_format.py`** — Contains `format_summary(metrics)` that returns stable, sorted JSON text using `json.dumps(metrics, sort_keys=True, indent=2)`.
+
+2. **`out/test_report_format.py`** — Contains `TestFormatSummary` with:
+   - `test_key_order_is_stable` — verifies that repeated calls produce identical output and keys are sorted alphabetically.
+   - `test_nested_keys_are_sorted` — verifies nested object keys are also sorted.

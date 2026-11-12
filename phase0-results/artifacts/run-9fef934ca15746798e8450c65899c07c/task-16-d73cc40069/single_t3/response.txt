@@ -1,0 +1,16 @@
+Both files have been created in `/tmp/phase0-case-0nmjcnt3/out/`:
+
+**`split_gate.py`** — implements `decide_mode(steps, sequential, branches, read_heavy, disjoint_writes)`:
+- Returns `"single"` if `sequential` is True or `steps <= 8`
+- Returns `"wide"` if `branches >= 3` AND (`read_heavy` or `disjoint_writes`)
+- Otherwise returns `"single"`
+
+**`test_split_gate.py`** — contains tests covering all three outcomes:
+- `test_sequential_returns_single` — sequential priority
+- `test_steps_leq_8_returns_single` — small step count
+- `test_wide_branches_and_read_heavy` — wide outcome via read-heavy
+- `test_wide_branches_and_disjoint_writes` — wide outcome via disjoint writes
+- `test_fewer_than_3_branches_returns_single` — branches < 3 stays single
+- `test_branches_without_read_heavy_or_disjoint_writes_returns_single` — 3+ branches but neither condition stays single
+
+Let me run the tests to confirm they pass:

@@ -1,0 +1,8 @@
+I have enough context to proceed. Let me create the output directory and both files.
+
+
+Both files have been created:
+
+**`out/result_envelope.py`** — Defines `SCHEMA_VERSION = "1.0.0"` and `build_result(node_id, summary, artifacts)` which returns a versioned dictionary with `schema_version`, `node_id`, `summary`, and `artifacts` fields.
+
+**`out/test_result_envelope.py`** — Contains a test verifying the returned dictionary is a `dict` and that `schema_version` matches the module constant and `node_id` matches the passed value (plus checks for `summary` and `artifacts`).

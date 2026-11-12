@@ -1,0 +1,35 @@
+# Task Worker Isolation and DAG Execution
+
+## Worker Isolation
+
+Each `Task` worker executes a single, focused node with **explicitly scoped file access**:
+
+- **`read_files`** — exact project-relative paths the node may inspect.
+- **`write_files`** — exact project-relative paths the node may produce/modify.
+- A node cannot read or write files outside its declared scopes.
+- **`recovery_of` / `recovery_of_run`** — recovery is limited to **two levels** and **cannot widen file scopes**, so a replacement node stays within the original node's read/write boundaries.
+- Outputs can be constrained by an optional **`output_schema`**; per-node **`budget`** caps tokens, calls, seconds, and tool errors.
+- **`acceptance`** checks are deterministic; `exists`-type checks must target paths listed in `write_files`.
+- Optional **`verification_mode: "independent"`** requests a fresh-context verifier (distinct model, separate token/call/time caps).
+
+## DAG Execution
+
+- **`needs`** on each `TaskSpec` declares dependency edges; a node runs only after its dependencies complete, forming a validated DAG.
+- A single `Task` call accepts **at most 8 tasks** (`maxItems: 8`).
+- The **deterministic split gate** uses the `estimate` to decide wide vs. single-agent execution. Wide (parallel DAG) execution is selected only when:
+  1. More than eight estimated steps,
+  2. No sequential dependency,
+  3. At least three independent branches, and
+  4. The work is read-heavy or has disjoint writes.
+- Otherwise the runtime stays single-agent.
+
+## Read/Write Scheduling Distinction
+
+| Aspect | `read_files` | `write_files` |
+|--------|-------------|---------------|
+| Purpose | Inputs inspected/analyzed | Outputs produced/modified |
+| Work type | Read-heavy branches mostly read | Disjoint-writes branches have non-overlapping write scopes |
+| Acceptance target | Not targeted by `exists` checks | `exists` acceptance checks must target these paths |
+| Scheduling | Declared upfront; scopes cannot be widened during recovery | Declared upfront; enforces non-overlap for disjoint parallel writes |
+
+In short: isolation comes from per-node file scopes and budgets; execution order comes from `needs` edges within an 8-node DAG; and the split gate only fans out to wide execution when the work is large, independent, and read/disjoint-write dominated.

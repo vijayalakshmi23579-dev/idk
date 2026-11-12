@@ -1,0 +1,1 @@
+"""tools — built-in tool implementations. Importing registers them."""

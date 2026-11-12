@@ -1,0 +1,5 @@
+Done. I read `sales.csv`, summed units and revenue per region, and wrote `/tmp/phase0-case-imh6kxv1/out/region_totals.json`:
+
+- **North**: 5 units, $65.00
+- **South**: 5 units, $55.00
+- **East**: 3 units, $39.00

@@ -1,0 +1,9 @@
+Based on the evidence pack in `architecture.md`:
+
+**What must not be claimed:** That Bash is sandboxed at the OS level, or that the runtime provides an OS-level shell sandbox for Bash.
+
+**What the document actually states:**
+- Line 12: *"Filesystem path checks and permission gates are application safeguards. The runtime has no OS-level shell sandbox."*
+- Line 16: *"The benchmark runner exposes scoped Read/Edit/Write tools, never Bash, and does not execute dataset-supplied commands."*
+
+**The distinction:** Path checks and permission gates are **application-level safeguards** (enforced by the tool layer), whereas **OS isolation** (e.g., a shell sandbox, container, namespace, or seccomp restriction for Bash) is explicitly absent. Bash is neither exposed nor OS-sandboxed by the benchmark runner.

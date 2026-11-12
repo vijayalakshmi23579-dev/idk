@@ -1,0 +1,14 @@
+Puzzle 7 reads: *"Four contributors complete 6, 8, 11, and 15 reviews. Three reviews fail validation and are repeated once by the same contributors. How many valid reviews are recorded after retries?"*
+
+**Step 1 — Count initially completed reviews:**
+6 + 8 + 11 + 15 = 40 reviews completed
+
+**Step 2 — Account for validation failures:**
+3 reviews fail validation → 40 − 3 = 37 valid reviews initially recorded
+
+**Step 3 — Account for retries (all three retries pass):**
+3 retries × 1 pass each → 37 + 3 = 40 valid reviews recorded
+
+**Answer: 40 valid reviews**
+
+All originally completed reviews eventually pass validation (either on first attempt or after retry), so the total valid reviews recorded equals the initial total of 40.

@@ -1,0 +1,8 @@
+**Deterministic split‑gate conditions**
+
+| Execution mode | Step threshold | Branch requirement |
+|----------------|----------------|--------------------|
+| **Single‑agent (default)** | • No estimate is supplied **or**<br>• Work is sequential **or**<br>• Estimated steps ≤ 8 | — (no explicit branch requirement) |
+| **Wide execution** | — (no step‑count limit; wide mode is triggered when the single‑agent conditions are *not* met) | • At least **three independent branches** **and**<br>• Work must be **read‑heavy** **or** have **disjoint writes** |
+
+In short: the split gate defaults to a single agent when the estimated number of steps is eight or fewer (or when the work is known to be sequential/estimate‑free). Wide execution is selected only if there are **≥ 3 independent branches** and the work is either read‑heavy or performs disjoint writes.

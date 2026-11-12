@@ -1,0 +1,12 @@
+Based on `architecture.md`, the persisted conversation and memory features are:
+
+**SQLite persistence**
+Session messages are append-only in SQLite. Append-only storage preserves the full message history as an immutable log, so conversations are durable and can be replayed or audited without overwriting prior turns.
+
+**FTS5 search**
+Full-text search over the message store is provided by FTS5, enabling indexed search across persisted session messages rather than scanning raw rows.
+
+**Summaries and source access**
+Memory uses summary DAGs with recoverable source messages. Summaries compact conversation state while retaining access to the original source messages they summarize, so compressed context can still be traced back to the underlying messages instead of losing the source material.
+
+These features sit in the runtime query loop, which owns conversation state, context shaping, compaction, and tool continuation; task workers have isolated query state.

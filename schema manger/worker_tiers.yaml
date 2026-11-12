@@ -1,0 +1,8 @@
+version: 1
+tiers:
+  T1:
+    model: nvidia_nim/nvidia/nemotron-3.5-bolt-e4b
+  T2:
+    model: nvidia_nim/nvidia/nemotron-3.5-lightning-30b-a3b
+  T3:
+    model: ACTIVE_MODEL

@@ -1,0 +1,14 @@
+I'll start by reading the available fixture files to understand the context of this task.
+
+
+Based on the architecture.md fixture, here is the answer:
+
+**Provider-visible information in tool schemas:** Tool schemas include **descriptions and parameters**.
+
+**Two deferred/prompt behaviors that must not be claimed:**
+1. **Tool prompt guidance** — must not be claimed as provider-visible.
+2. **Deferred-schema loading** — must not be claimed as provider-visible.
+
+This comes directly from line 15 of architecture.md: *"Tool schemas currently include descriptions and parameters. Tool prompt guidance and deferred-schema loading are not provider-visible behaviors."*
+
+No Tool call was needed — this is a single read-heavy question answerable from the existing fixture files, so it falls under the deterministic split gate's default single-agent path (≤8 steps, no independent branches to parallelize).

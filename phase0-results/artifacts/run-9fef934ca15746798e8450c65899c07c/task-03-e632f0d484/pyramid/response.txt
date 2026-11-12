@@ -1,0 +1,24 @@
+## Deterministic Split-Gate Conditions
+
+### Wide Execution (multi-agent DAG via `Task`)
+All of the following must hold simultaneously:
+
+| Condition | Requirement |
+|---|---|
+| **Step threshold** | Estimated total steps **> 8** (more than eight) |
+| **Sequential dependency** | **None** — later work must not depend on earlier discoveries or shared state (`sequential_dependency = false`) |
+| **Independent branches** | **≥ 3** independently useful branches (capped at 8), and the work must be read-heavy or have disjoint writes (`read_heavy = true` and/or `disjoint_writes = true`) |
+
+Each branch declares its exact `read_files`/`write_files` scope, dependencies (`needs`), budget, and acceptance checks.
+
+### Single-Agent Execution (default)
+Used whenever any wide-execution condition fails:
+- ≤ 8 estimated steps, **or**
+- sequential dependency exists, **or**
+- fewer than three independent branches.
+
+In that case, the work is completed directly without spawning sub-tasks.
+
+---
+
+For this specific request — simply stating the gate conditions — it is a single, non-sequential step well under the threshold, so it is completed directly above rather than via `Task`.

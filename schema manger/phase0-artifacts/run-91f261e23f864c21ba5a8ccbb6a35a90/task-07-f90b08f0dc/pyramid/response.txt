@@ -1,0 +1,16 @@
+## Phase 0 Report Measurements
+
+Per `architecture.md`, a Phase 0 report should capture:
+
+1. **Success checks**
+2. **Quality**
+3. **Tokens**
+4. **Calls**
+5. **Latency**
+6. **Model IDs**
+7. **Optional cost**
+8. **Human review**
+
+## How Unknown Prices Are Represented
+
+Unknown prices are represented as **`null`** (JSON null / absent value). The architecture notes state explicitly: *"Unknown prices remain null."* So rather than zeroing out or omitting price data, missing/unknown prices are encoded as `null` to distinguish them from genuinely zero or known prices.

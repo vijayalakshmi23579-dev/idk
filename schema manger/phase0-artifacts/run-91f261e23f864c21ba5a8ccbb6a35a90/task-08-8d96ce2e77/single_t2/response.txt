@@ -1,0 +1,9 @@
+Provider‑visible information that appears in the tool schemas:
+
+- **Descriptions** of each tool.  
+- **Parameters** (the schema definition of each parameter).
+
+The two deferred / prompt‑related behaviors that **must not** be claimed as provider‑visible:
+
+1. **Tool prompt guidance** – any guidance that is injected into the prompt after the initial schema delivery.  
+2. **Deferred‑schema loading** – loading the full parameter schema lazily or on‑demand rather than presenting it up‑front.

@@ -1,0 +1,10 @@
+The file `/tmp/phase0-case-9v4c7upg/out/large_purchases.json` has been created with the required data:
+
+```json
+{
+  "count": 2,
+  "total_amount": 70
+}
+```
+
+This reflects the two purchases with amounts of at least 30 (Alice’s $30 and Cara’s $40).

@@ -1,0 +1,6 @@
+The provider-agnostic boundary is the **API adapter**. It sits between the internal runtime (which owns conversation state, context shaping, compaction, and tool continuation) and the external model providers. At that boundary, the adapter converts internal messages and tools into a form usable by **LiteLLM**, and it normalizes provider streaming events back into the runtime's internal event model.
+
+Evidence (architecture.md, line 6): "The API adapter converts internal messages and tools for LiteLLM and normalizes provider streaming events."
+
+- **Adapter:** API adapter
+- **Library:** LiteLLM

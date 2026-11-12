@@ -1,0 +1,1 @@
+Created `out/name_utils.py` with the `normalize_name` function and `out/test_name_utils.py` with a focused test for `'  Ada   LOVELACE '`. Both files are under the workspace directory as requested.

@@ -1,0 +1,5 @@
+Done. I read `users.json` (3 users with ages 30, 40, 35) and wrote `/tmp/phase0-case-uqo58s5y/out/user_stats.json` with:
+
+- **user_count**: 3
+- **age_sum**: 105
+- **average_age**: 35

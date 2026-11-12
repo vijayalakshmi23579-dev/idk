@@ -1,0 +1,30 @@
+**Current provider‑reliability controls**
+
+- The supplied fixture files (`architecture.md`, `events.json`, `puzzles.md`, `sales.csv`, `users.json`) contain **no explicit statements** about provider‑level reliability mechanisms such as:
+  - Retry‑policy definitions
+  - Timeout or heartbeat intervals
+  - Circuit‑breaker thresholds
+  - Error‑handling or fallback strategies
+  - Monitoring or alerting rules
+
+- Consequently, the *current* set of reliability controls is effectively **null/absent**.  Any “controls” that can be inferred are only implicit patterns from the puzzle examples (e.g., “complete one third then add more”), but these are not formal provider guarantees.
+
+**Quota limits that are still missing**
+
+| Missing quota / limit | Why it matters | Typical shape (if defined) |
+|-----------------------|----------------|----------------------------|
+| **Maximum concurrent jobs / requests per provider** | Prevents overload and ensures fair share of resources. | e.g., `maxConcurrent = 100` |
+| **Daily/weekly job quota per user or service tier** | Controls cost, capacity planning, and SLA adherence. | e.g., `maxJobsPerDay = 10 000` |
+| **Rate‑limit (requests per second/minute)** | Protects downstream services from burst traffic. | e.g., `rpm = 50` |
+| **Job‑level timeout** | Guarantees progress and frees stuck resources. | e.g., `timeoutSeconds = 3600` |
+| **Retry‑attempt cap** | Avoids infinite retry loops and gives up gracefully. | e.g., `maxRetries = 3` |
+| **Storage or data‑size quota** | Limits how much data can be processed per invocation. | e.g., `maxInputBytes = 5 MB` |
+| **Grace‑period / cool‑down between batches** | Prevents rapid re‑submission that could destabilise the system. | e.g., `coolDownSeconds = 30` |
+
+**What to do next**
+
+1. **Add a reliability‑control spec** (e.g., a short YAML or JSON block) that explicitly lists the above limits and any organization‑specific policies (timeouts, retries, circuit‑breaker thresholds, etc.).
+2. **Reference the spec** from `architecture.md` (or a new `reliability.md`) so that future developers and automation tooling can query the limits programmatically.
+3. **Validate** that any downstream services or orchestration frameworks (Kubernetes limits, cloud‑provider quotas, CI pipelines) are aligned with the documented numbers.
+
+In short: **there are currently no provider‑reliability controls defined, and the quota limits listed above are the key ones that need to be introduced** to give the system measurable, enforceable reliability guarantees.

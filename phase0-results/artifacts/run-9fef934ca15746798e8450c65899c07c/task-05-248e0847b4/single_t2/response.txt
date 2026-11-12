@@ -1,0 +1,9 @@
+**Persisted conversation and memory features (as documented in `architecture.md`)**
+
+| Feature | Description |
+|---------|-------------|
+| **SQLite** | Session messages are stored **append‑only** in a SQLite database. This gives a durable, relational store that can be queried, indexed, and transactionally updated across runs. |
+| **FTS5** | Full‑text search is provided by SQLite’s **FTS5** extension. FTS5 enables fast, lightweight keyword/phrase searches over the stored messages without needing a separate search service. |
+| **Summaries & source access** | Summaries are represented as a **DAG** (directed‑acyclic graph) that references the original session messages. Each summary node stores a compact abstraction but also retains a **pointer back to the source messages** (the original rows in the SQLite table). This means you can reconstruct the full conversation from a summary, or drill down from a summary to the exact messages that contributed to it. |
+
+In short, the system persists conversations in an append‑only SQLite table, indexes them with FTS5 for fast text retrieval, and keeps summaries that include links back to the original source messages, ensuring both efficient searching and complete recoverability.

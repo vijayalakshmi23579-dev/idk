@@ -1,0 +1,61 @@
+Both files have been created in `/tmp/phase0-case-dk9pn7i3/out/`:
+
+**`out/result_envelope.py`**
+```python
+"""Result envelope module providing a versioned build_result function."""
+
+SCHEMA_VERSION = "1.0.0"
+
+
+def build_result(node_id: str, summary: str, artifacts: dict) -> dict:
+    """Build a versioned result envelope dictionary.
+
+    Args:
+        node_id: Identifier for the node producing the result.
+        summary: A short human‑readable summary of the result.
+        artifacts: Dict of arbitrary artifact data associated with the result.
+
+    Returns:
+        A dictionary with keys: schema_version, node_id, summary, artifacts.
+    """
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "node_id": node_id,
+        "summary": summary,
+        "artifacts": artifacts,
+    }
+```
+
+**`out/test_result_envelope.py`**
+```python
+"""Test suite for the result envelope module."""
+
+import pytest
+
+from result_envelope import build_result, SCHEMA_VERSION
+
+
+def test_schema_version():
+    """The built result must contain the expected schema_version."""
+    result = build_result(node_id="node-1", summary="test", artifacts={})
+    assert result["schema_version"] == SCHEMA_VERSION
+
+
+def test_node_id():
+    """The built result must contain the provided node_id."""
+    result = build_result(node_id="my-node", summary="test", artifacts={})
+    assert result["node_id"] == "my-node"
+
+
+def test_summary_and_artifacts():
+    """Summary and artifacts are stored correctly."""
+    result = build_result(
+        node_id="n1",
+        summary="all good",
+        artifacts={"log": "abc.txt"},
+    )
+    assert result["summary"] == "all good"
+    assert result["artifacts"] == {"log": "abc.txt"}
+```
+
+Running the tests (e.g., `pytest out/test_result_envelope.py`) will verify that `schema_version` and `node_id` are correctly populated in the dictionary returned by `build_result`.
