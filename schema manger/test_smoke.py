@@ -45,7 +45,8 @@ def main():
         from registry import find
         expected = (
             "Read", "Edit", "Write", "Bash", "TodoWrite", "Task",
-            "MemorySearch", "MemoryExpand",
+            "MemorySearch", "MemoryExpand", "WorkflowPropose", "WorkflowRun",
+            "WorkflowList", "WorkflowPromote",
         )
         missing = [name for name in expected if find(name) is None]
         assert not missing, f"CLI tools not registered: {missing}"

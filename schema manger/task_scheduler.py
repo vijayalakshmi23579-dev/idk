@@ -2,18 +2,23 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import os
+import shutil
+import tempfile
 import threading
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Literal
 
 from pydantic import BaseModel, Field, field_validator
-from agent_contracts import AcceptanceCheck, TaskBudget
-from task_checks import validate_acceptance_check
+from agent_contracts import (
+    AcceptanceCheck, JoinCheck, TaskBudget, TaskResultEnvelope,
+)
+from task_checks import evaluate_join_check, validate_acceptance_check, validate_join_check
 
 
 class TaskSpec(BaseModel):
@@ -27,6 +32,20 @@ class TaskSpec(BaseModel):
     needs: list[str] = Field(default_factory=list)
     read_files: list[str] = Field(default_factory=list)
     write_files: list[str] = Field(default_factory=list)
+    assumptions: list[str] = Field(
+        default_factory=list,
+        max_length=20,
+        description="Context assumptions the worker should preserve or report as invalid.",
+    )
+    join_criteria: list[str] = Field(
+        default_factory=list,
+        max_length=20,
+        description="Conditions the parent should check when integrating this result.",
+    )
+    join_checks: list[JoinCheck] = Field(
+        default_factory=list,
+        description="Deterministic assertions over outputs from declared dependencies.",
+    )
     non_goals: list[str] = Field(
         default_factory=list,
         description="Explicitly excluded work for this node.",
@@ -65,6 +84,12 @@ class TaskSpec(BaseModel):
             "Requires a verifier model distinct from the worker model."
         ),
     )
+    max_escalations: int = Field(
+        default=1,
+        ge=0,
+        le=1,
+        description="Maximum evidence-triggered stronger-tier retries within this task budget.",
+    )
 
     @field_validator("instruction")
     @classmethod
@@ -88,6 +113,8 @@ class TaskStatus(str, Enum):
     SUCCEEDED = "succeeded"
     FAILED = "failed"
     BLOCKED = "blocked"
+    NEEDS_ESCALATION = "needs_escalation"
+    CONTRACT_CHANGE_REQUEST = "contract_change_request"
 
 
 @dataclass(frozen=True)
@@ -112,6 +139,8 @@ class TaskFileScope:
     read_paths: frozenset[str]
     write_paths: frozenset[str]
     leases: "FileLeaseRegistry"
+    staging_root: str | None = None
+    baseline_write_hashes: dict[str, str | None] = field(default_factory=dict)
 
     def check_access(self, tool_name: str, file_path: str) -> str | None:
         try:
@@ -129,6 +158,37 @@ class TaskFileScope:
         if tool_name == "Read" and canonical not in self.read_paths | self.write_paths:
             return f"Task {self.task_id} is not permitted to read {canonical}."
         return None
+
+    def execution_path(self, tool_name: str, file_path: str) -> str:
+        error = self.check_access(tool_name, file_path)
+        if error:
+            raise ValueError(error)
+        canonical = canonical_task_path(file_path, self.project_root)
+        if self.staging_root is None:
+            return canonical
+        return os.path.join(
+            self.staging_root,
+            os.path.relpath(canonical, self.project_root),
+        )
+
+    def externalize_result(self, value: Any) -> Any:
+        if self.staging_root is None:
+            return value
+        if isinstance(value, list):
+            return [self.externalize_result(item) for item in value]
+        if not isinstance(value, dict):
+            return value
+        external = {}
+        path_fields = {"file_path", "filePath", "path"}
+        for key, item in value.items():
+            if key in path_fields and isinstance(item, str):
+                staged_prefix = self.staging_root + os.sep
+                if item.startswith(staged_prefix):
+                    relative = os.path.relpath(item, self.staging_root)
+                    external[key] = os.path.join(self.project_root, relative)
+                    continue
+            external[key] = self.externalize_result(item)
+        return external
 
 
 class FileLeaseConflict(ValueError):
@@ -200,6 +260,116 @@ def _paths_overlap(left: str, right: str) -> bool:
         return os.path.commonpath((left, right)) in (left, right)
     except ValueError:
         return False
+
+
+def _file_sha256(path: str) -> str | None:
+    if not os.path.isfile(path):
+        return None
+    digest = hashlib.sha256()
+    with open(path, "rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _stage_task_scope(scope: TaskFileScope) -> TaskFileScope:
+    if not scope.write_paths:
+        return scope
+    staging_root = tempfile.mkdtemp(prefix="agent-task-stage-")
+    baseline: dict[str, str | None] = {}
+    try:
+        for path in sorted(scope.read_paths | scope.write_paths):
+            staged_path = os.path.join(
+                staging_root,
+                os.path.relpath(path, scope.project_root),
+            )
+            os.makedirs(os.path.dirname(staged_path), exist_ok=True)
+            if os.path.isfile(path):
+                shutil.copy2(path, staged_path)
+            elif os.path.exists(path):
+                raise ValueError(f"Task-scoped path is not a regular file: {path}")
+            if path in scope.write_paths:
+                baseline[path] = _file_sha256(path)
+        return replace(
+            scope,
+            staging_root=staging_root,
+            baseline_write_hashes=baseline,
+        )
+    except Exception:
+        shutil.rmtree(staging_root, ignore_errors=True)
+        raise
+
+
+def _commit_task_staging(scope: TaskFileScope) -> None:
+    if scope.staging_root is None:
+        return
+
+    changes: list[tuple[str, str]] = []
+    for path in sorted(scope.write_paths):
+        if not scope.leases.owns(scope.task_id, path):
+            raise FileLeaseConflict(
+                f"Task {scope.task_id} lost its write lease for {path}."
+            )
+        if _file_sha256(path) != scope.baseline_write_hashes.get(path):
+            raise FileLeaseConflict(
+                f"Workspace file changed while Task {scope.task_id} was staged: {path}"
+            )
+        staged_path = scope.execution_path("Write", path)
+        if not os.path.isfile(staged_path):
+            if scope.baseline_write_hashes.get(path) is not None:
+                raise ValueError(f"Staged worker output is missing: {path}")
+            continue
+        if _file_sha256(staged_path) == scope.baseline_write_hashes.get(path):
+            continue
+        changes.append((path, staged_path))
+
+    prepared: list[tuple[str, str, str | None]] = []
+    applied: list[tuple[str, str | None]] = []
+    try:
+        for destination, staged_path in changes:
+            os.makedirs(os.path.dirname(destination), exist_ok=True)
+            fd, temporary = tempfile.mkstemp(
+                prefix=".agent-task-output-",
+                dir=os.path.dirname(destination),
+            )
+            os.close(fd)
+            shutil.copy2(staged_path, temporary)
+            backup = None
+            if os.path.isfile(destination):
+                backup_fd, backup = tempfile.mkstemp(
+                    prefix=".agent-task-backup-",
+                    dir=os.path.dirname(destination),
+                )
+                os.close(backup_fd)
+                shutil.copy2(destination, backup)
+            prepared.append((destination, temporary, backup))
+
+        for destination, temporary, backup in prepared:
+            os.replace(temporary, destination)
+            applied.append((destination, backup))
+    except Exception:
+        for destination, backup in reversed(applied):
+            try:
+                if backup is None:
+                    os.unlink(destination)
+                else:
+                    os.replace(backup, destination)
+            except OSError:
+                pass
+        raise
+    finally:
+        for _destination, temporary, backup in prepared:
+            for path in (temporary, backup):
+                if path is not None:
+                    try:
+                        os.unlink(path)
+                    except FileNotFoundError:
+                        pass
+
+
+def _cleanup_task_staging(scope: TaskFileScope) -> None:
+    if scope.staging_root is not None:
+        shutil.rmtree(scope.staging_root, ignore_errors=True)
 
 
 def validate_task_graph(
@@ -291,6 +461,17 @@ def validate_task_graph(
                         f"Task {task.id} has an invalid output schema for "
                         f"dependency {dependency_id}"
                     ) from error
+        for check in task.join_checks:
+            validate_join_check(check)
+            if check.kind == "equals":
+                assert check.left is not None and check.right is not None
+                referenced = {check.left.dependency_id, check.right.dependency_id}
+                unknown = referenced - set(task.needs)
+                if unknown:
+                    raise ValueError(
+                        f"Task {task.id} join check references undeclared dependencies: "
+                        + ", ".join(sorted(unknown))
+                    )
         normalized.append(ValidatedTask(task, reads, writes))
 
     for index, left in enumerate(normalized):
@@ -390,6 +571,7 @@ async def run_task_graph(
         if node.write_paths:
             leases.acquire(node.spec.id, node.write_paths)
         try:
+            scope = _stage_task_scope(scope)
             dependency_outputs: dict[str, Any] = {
                 dependency: outcomes[dependency].output
                 for dependency in node.spec.needs
@@ -411,8 +593,17 @@ async def run_task_graph(
                     raise ValueError(
                         f"Dependency {dependency_id} output failed its schema{location}"
                     )
-            return await runner(node.spec, dependency_outputs, scope)
+            for check in node.spec.join_checks:
+                if not evaluate_join_check(check, dependency_outputs):
+                    raise ValueError(
+                        f"Task {node.spec.id} join check failed: {check.kind}"
+                    )
+            result = await runner(node.spec, dependency_outputs, scope)
+            if isinstance(result, TaskResultEnvelope) and result.status == "ok":
+                _commit_task_staging(scope)
+            return result
         finally:
+            _cleanup_task_staging(scope)
             if node.write_paths:
                 leases.release(node.spec.id)
 
@@ -428,7 +619,15 @@ async def run_task_graph(
             dependency_states = [
                 outcomes[dependency].status for dependency in node.spec.needs
             ]
-            if any(state in (TaskStatus.FAILED, TaskStatus.BLOCKED) for state in dependency_states):
+            if any(
+                state in {
+                    TaskStatus.FAILED,
+                    TaskStatus.BLOCKED,
+                    TaskStatus.NEEDS_ESCALATION,
+                    TaskStatus.CONTRACT_CHANGE_REQUEST,
+                }
+                for state in dependency_states
+            ):
                 outcomes[node.spec.id].status = TaskStatus.BLOCKED
                 outcomes[node.spec.id].error = "A required dependency did not succeed."
                 emit(node.spec.id, "blocked")
@@ -457,12 +656,22 @@ async def run_task_graph(
                 outcome = outcomes[task_id]
                 try:
                     outcome.output = task.result()
-                    outcome.status = TaskStatus.SUCCEEDED
+                    if (
+                        isinstance(outcome.output, TaskResultEnvelope)
+                        and outcome.output.status != "ok"
+                    ):
+                        outcome.status = TaskStatus(outcome.output.status)
+                        outcome.error = (
+                            outcome.output.diagnostics or outcome.output.summary
+                        )
+                    else:
+                        outcome.status = TaskStatus.SUCCEEDED
                     emit(
                         task_id,
-                        "succeeded",
+                        outcome.status.value,
                         duration_ms=round((time.perf_counter() - started_at[task_id]) * 1000),
                         model_id=getattr(outcome.output, "model_id", None),
+                        model_ids=getattr(outcome.output, "models_used", []),
                     )
                 except asyncio.CancelledError:
                     outcome.status = TaskStatus.FAILED

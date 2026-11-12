@@ -88,6 +88,33 @@ CREATE TABLE IF NOT EXISTS task_runs (
 CREATE INDEX IF NOT EXISTS idx_task_runs_project
     ON task_runs(project_root, updated_at);
 
+CREATE TABLE IF NOT EXISTS workflow_definitions (
+    project_root  TEXT NOT NULL,
+    workflow_id   TEXT NOT NULL,
+    version       INTEGER NOT NULL,
+    owner_session TEXT NOT NULL,
+    status        TEXT NOT NULL,
+    definition    TEXT NOT NULL,
+    created_at    REAL NOT NULL,
+    promoted_at   REAL,
+    PRIMARY KEY (project_root, workflow_id, version)
+);
+CREATE INDEX IF NOT EXISTS idx_workflows_project_status
+    ON workflow_definitions(project_root, status, workflow_id, version);
+
+CREATE TABLE IF NOT EXISTS workflow_runs (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_root  TEXT NOT NULL,
+    workflow_id   TEXT NOT NULL,
+    version       INTEGER NOT NULL,
+    session_id    TEXT NOT NULL,
+    query_id      TEXT NOT NULL,
+    succeeded     INTEGER NOT NULL,
+    created_at    REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_workflow_runs
+    ON workflow_runs(project_root, workflow_id, version, succeeded);
+
 CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
     content,
     content='messages',
@@ -321,7 +348,10 @@ class Store:
                 progress = run_payload.setdefault("progress", {})
                 progress[task_id] = normalized.model_dump(mode="json")
                 task_ids = set(run_payload.get("task_specs", {}))
-                terminal_statuses = {"succeeded", "failed", "blocked"}
+                terminal_statuses = {
+                    "succeeded", "failed", "blocked",
+                    "needs_escalation", "contract_change_request",
+                }
                 if task_ids and all(
                     progress.get(node_id, {}).get("status") in terminal_statuses
                     for node_id in task_ids
@@ -389,7 +419,185 @@ class Store:
         if not isinstance(storage_key, str) or not re.fullmatch(r"[0-9a-f]{64}", storage_key):
             return None
         path = os.path.join(self.artifact_dir, storage_key[:2], storage_key[2:])
-        return path if os.path.isfile(path) else None
+        if not os.path.isfile(path):
+            return None
+        digest = hashlib.sha256()
+        try:
+            with open(path, "rb") as artifact:
+                for chunk in iter(lambda: artifact.read(1024 * 1024), b""):
+                    digest.update(chunk)
+        except OSError:
+            return None
+        return path if digest.hexdigest() == storage_key else None
+
+    def save_workflow_definition(
+        self,
+        project_root: str,
+        session_id: str,
+        definition: dict,
+    ) -> None:
+        workflow_id = definition.get("id")
+        version = definition.get("version")
+        if not session_id or not isinstance(workflow_id, str) or not isinstance(version, int):
+            raise ValueError("Workflow definitions require a session, ID, and integer version")
+        canonical_root = os.path.realpath(os.path.abspath(project_root))
+        with self.db:
+            self.db.execute(
+                "INSERT INTO workflow_definitions "
+                "(project_root, workflow_id, version, owner_session, status, definition, created_at) "
+                "VALUES (?, ?, ?, ?, 'quarantined', ?, ?)",
+                (
+                    canonical_root,
+                    workflow_id,
+                    version,
+                    session_id,
+                    json.dumps(definition, ensure_ascii=True, sort_keys=True),
+                    time.time(),
+                ),
+            )
+
+    def get_workflow_definition(
+        self,
+        project_root: str,
+        workflow_id: str,
+        version: int,
+        session_id: str,
+    ) -> dict | None:
+        canonical_root = os.path.realpath(os.path.abspath(project_root))
+        row = self.db.execute(
+            "SELECT definition FROM workflow_definitions WHERE project_root = ? "
+            "AND workflow_id = ? AND version = ? "
+            "AND (owner_session = ? OR status = 'promoted')",
+            (canonical_root, workflow_id, version, session_id),
+        ).fetchone()
+        return json.loads(row["definition"]) if row else None
+
+    def list_workflow_definitions(
+        self,
+        project_root: str,
+        session_id: str,
+    ) -> list[dict]:
+        canonical_root = os.path.realpath(os.path.abspath(project_root))
+        rows = self.db.execute(
+            "SELECT workflow_id, version, owner_session, status, definition "
+            "FROM workflow_definitions WHERE project_root = ? "
+            "AND (owner_session = ? OR status = 'promoted') "
+            "ORDER BY workflow_id, version",
+            (canonical_root, session_id),
+        ).fetchall()
+        return [{
+            "id": row["workflow_id"],
+            "version": row["version"],
+            "owner_session": row["owner_session"],
+            "status": row["status"],
+            "definition": json.loads(row["definition"]),
+        } for row in rows]
+
+    def record_workflow_run(
+        self,
+        project_root: str,
+        workflow_id: str,
+        version: int,
+        session_id: str,
+        query_id: str,
+        succeeded: bool,
+    ) -> None:
+        if not session_id or not query_id:
+            raise ValueError("Workflow runs require session and query IDs")
+        canonical_root = os.path.realpath(os.path.abspath(project_root))
+        with self.db:
+            self.db.execute(
+                "INSERT INTO workflow_runs "
+                "(project_root, workflow_id, version, session_id, query_id, succeeded, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    canonical_root, workflow_id, version, session_id, query_id,
+                    int(succeeded), time.time(),
+                ),
+            )
+
+    def promote_workflow_definition(
+        self,
+        project_root: str,
+        workflow_id: str,
+        version: int,
+        session_id: str,
+        *,
+        min_successful_runs: int = 3,
+        min_query_runs: int = 2,
+    ) -> dict[str, int]:
+        canonical_root = os.path.realpath(os.path.abspath(project_root))
+        with self.db:
+            row = self.db.execute(
+                "SELECT owner_session, status FROM workflow_definitions "
+                "WHERE project_root = ? AND workflow_id = ? AND version = ?",
+                (canonical_root, workflow_id, version),
+            ).fetchone()
+            if row is None or row["owner_session"] != session_id:
+                raise ValueError("Only the owning session can promote its workflow")
+            if row["status"] != "quarantined":
+                raise ValueError("Only quarantined workflows can be promoted")
+            usage = self.db.execute(
+                "SELECT COUNT(*) AS successful_runs, COUNT(DISTINCT query_id) AS query_runs "
+                "FROM workflow_runs WHERE project_root = ? AND workflow_id = ? "
+                "AND version = ? AND succeeded = 1",
+                (canonical_root, workflow_id, version),
+            ).fetchone()
+            successful_runs = int(usage["successful_runs"])
+            query_runs = int(usage["query_runs"])
+            if successful_runs < min_successful_runs or query_runs < min_query_runs:
+                raise ValueError(
+                    f"Workflow promotion requires {min_successful_runs} successful runs "
+                    f"across {min_query_runs} query runs; observed {successful_runs} "
+                    f"successful runs across {query_runs} query runs"
+                )
+            self.db.execute(
+                "UPDATE workflow_definitions SET status = 'promoted', promoted_at = ? "
+                "WHERE project_root = ? AND workflow_id = ? AND version = ?",
+                (time.time(), canonical_root, workflow_id, version),
+            )
+        return {"successful_runs": successful_runs, "query_runs": query_runs}
+
+    def collect_unreferenced_artifacts(self, *, dry_run: bool = True) -> dict[str, object]:
+        """List or explicitly delete content-addressed blobs with no stored reference."""
+        referenced: set[str] = set()
+        for query in (
+            "SELECT payload FROM task_runs",
+            "SELECT content FROM messages",
+            "SELECT content FROM summaries",
+        ):
+            for row in self.db.execute(query):
+                referenced.update(re.findall(r"(?<![0-9a-f])[0-9a-f]{64}(?![0-9a-f])", row[0] or ""))
+
+        candidates: list[tuple[str, str]] = []
+        if os.path.isdir(self.artifact_dir):
+            with os.scandir(self.artifact_dir) as shards:
+                for shard in shards:
+                    if not re.fullmatch(r"[0-9a-f]{2}", shard.name):
+                        continue
+                    if not shard.is_dir(follow_symlinks=False):
+                        continue
+                    with os.scandir(shard.path) as blobs:
+                        for blob in blobs:
+                            if not re.fullmatch(r"[0-9a-f]{62}", blob.name):
+                                continue
+                            if not blob.is_file(follow_symlinks=False):
+                                continue
+                            storage_key = shard.name + blob.name
+                            if storage_key not in referenced:
+                                candidates.append((storage_key, blob.path))
+
+        candidate_keys = sorted(storage_key for storage_key, _path in candidates)
+        deleted: list[str] = []
+        if not dry_run:
+            for storage_key, path in candidates:
+                os.unlink(path)
+                deleted.append(storage_key)
+        return {
+            "dry_run": dry_run,
+            "candidates": candidate_keys,
+            "deleted": deleted,
+        }
 
     def save_task_run(
         self,

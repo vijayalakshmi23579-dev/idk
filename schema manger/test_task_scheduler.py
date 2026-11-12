@@ -3,6 +3,7 @@ import asyncio
 import os
 import tempfile
 
+from agent_contracts import TaskResultEnvelope, WorkerUsage
 from task_scheduler import (
     FileLeaseConflict,
     FileLeaseRegistry,
@@ -111,6 +112,92 @@ async def main():
         assert all(result.status == TaskStatus.SUCCEEDED for result in typed_results)
         assert joined_dependencies == {"producer": {"answer": "42"}}
 
+        join_runner_calls = []
+
+        async def join_runner(spec, dependencies, scope):
+            join_runner_calls.append(spec.id)
+            if spec.id == "left":
+                return {"total": 12}
+            if spec.id == "right":
+                return {"total": 12}
+            assert dependencies == {"left": {"total": 12}, "right": {"total": 12}}
+            return "joined consistent outputs"
+
+        equal_check = {
+            "kind": "equals",
+            "left": {"dependency_id": "left", "json_path": "total"},
+            "right": {"dependency_id": "right", "json_path": "total"},
+        }
+        consistent_join = await run_task_graph([
+            TaskSpec(id="left", instruction="Produce left total"),
+            TaskSpec(id="right", instruction="Produce right total"),
+            TaskSpec(
+                id="join",
+                instruction="Join matching totals",
+                needs=["left", "right"],
+                join_checks=[equal_check],
+            ),
+        ], join_runner, project_root=root)
+        assert all(result.status == TaskStatus.SUCCEEDED for result in consistent_join)
+        assert join_runner_calls == ["left", "right", "join"]
+
+        dependency_map_schema = {
+            "type": "object",
+            "properties": {
+                "left": {
+                    "type": "object",
+                    "properties": {"total": {"type": "integer"}},
+                    "required": ["total"],
+                },
+                "right": {
+                    "type": "object",
+                    "properties": {"total": {"type": "integer"}},
+                    "required": ["total"],
+                },
+            },
+            "required": ["left", "right"],
+        }
+        schema_join = await run_task_graph([
+            TaskSpec(id="left", instruction="Produce left total"),
+            TaskSpec(id="right", instruction="Produce right total"),
+            TaskSpec(
+                id="join",
+                instruction="Validate the combined dependency shape",
+                needs=["left", "right"],
+                join_checks=[{
+                    "kind": "schema",
+                    "schema_definition": dependency_map_schema,
+                }],
+            ),
+        ], join_runner, project_root=root)
+        assert all(result.status == TaskStatus.SUCCEEDED for result in schema_join)
+
+        join_runner_calls.clear()
+
+        async def inconsistent_join_runner(spec, dependencies, scope):
+            join_runner_calls.append(spec.id)
+            if spec.id == "left":
+                return {"total": 12}
+            if spec.id == "right":
+                return {"total": 13}
+            return "must not run"
+
+        inconsistent_join = await run_task_graph([
+            TaskSpec(id="left", instruction="Produce left total"),
+            TaskSpec(id="right", instruction="Produce right total"),
+            TaskSpec(
+                id="join",
+                instruction="Reject inconsistent totals",
+                needs=["left", "right"],
+                join_checks=[equal_check],
+            ),
+        ], inconsistent_join_runner, project_root=root)
+        assert inconsistent_join[0].status == TaskStatus.SUCCEEDED
+        assert inconsistent_join[1].status == TaskStatus.SUCCEEDED
+        assert inconsistent_join[2].status == TaskStatus.FAILED
+        assert "join check failed" in inconsistent_join[2].error
+        assert join_runner_calls == ["left", "right"]
+
         invalid_calls = []
 
         async def invalid_join_runner(spec, dependencies, scope):
@@ -165,6 +252,65 @@ async def main():
         assert all(result.status == TaskStatus.SUCCEEDED for result in disjoint_results)
         assert max_active_writers == 2
 
+        staged_path = os.path.join(root, "src", "staged.py")
+        with open(staged_path, "w", encoding="utf-8") as staged_file:
+            staged_file.write("before")
+
+        async def staged_runner(spec, dependencies, scope):
+            with open(
+                scope.execution_path("Write", staged_path),
+                "w",
+                encoding="utf-8",
+            ) as staged_file:
+                staged_file.write(spec.id)
+            if spec.id == "discard-staged":
+                return TaskResultEnvelope(
+                    run_id="staging-test",
+                    node_id=spec.id,
+                    status="failed",
+                    summary="Discard staged output",
+                )
+            if spec.id == "workspace-conflict":
+                with open(staged_path, "w", encoding="utf-8") as workspace_file:
+                    workspace_file.write("external edit")
+            return TaskResultEnvelope(
+                run_id="staging-test",
+                node_id=spec.id,
+                status="ok",
+                summary="Staged output ready",
+            )
+
+        discarded = await run_task_graph([
+            TaskSpec(
+                id="discard-staged",
+                instruction="Fail after writing in staging",
+                write_files=[staged_path],
+            ),
+        ], staged_runner, project_root=root)
+        assert discarded[0].status == TaskStatus.FAILED
+        assert open(staged_path, encoding="utf-8").read() == "before"
+
+        committed = await run_task_graph([
+            TaskSpec(
+                id="commit-staged",
+                instruction="Commit successful staged output",
+                write_files=[staged_path],
+            ),
+        ], staged_runner, project_root=root)
+        assert committed[0].status == TaskStatus.SUCCEEDED
+        assert open(staged_path, encoding="utf-8").read() == "commit-staged"
+
+        conflicted = await run_task_graph([
+            TaskSpec(
+                id="workspace-conflict",
+                instruction="Do not overwrite a concurrent workspace edit",
+                write_files=[staged_path],
+            ),
+        ], staged_runner, project_root=root)
+        assert conflicted[0].status == TaskStatus.FAILED
+        assert "Workspace file changed" in conflicted[0].error
+        assert open(staged_path, encoding="utf-8").read() == "external edit"
+
         try:
             validate_task_graph([
                 TaskSpec(
@@ -196,6 +342,43 @@ async def main():
         assert any(
             event["task_id"] == "blocked" and event["status"] == "blocked"
             for event in events
+        )
+
+        typed_events = []
+        typed_calls = []
+
+        async def typed_request_runner(spec, dependencies, scope):
+            typed_calls.append(spec.id)
+            if spec.id == "request":
+                return TaskResultEnvelope(
+                    run_id="typed-request-run",
+                    node_id=spec.id,
+                    status="needs_escalation",
+                    summary="The task needs a stronger model.",
+                    output={"reason": "ambiguous interface"},
+                    usage=WorkerUsage(output_tokens=7, calls=1, seconds=0.1),
+                )
+            return spec.id
+
+        typed_request_outcomes = await run_task_graph([
+            TaskSpec(id="request", instruction="Request escalation"),
+            TaskSpec(
+                id="dependent-request",
+                instruction="Wait for the requested result",
+                needs=["request"],
+            ),
+            TaskSpec(id="independent-request", instruction="Continue independently"),
+        ], typed_request_runner, project_root=root, on_event=typed_events.append)
+        assert [outcome.status for outcome in typed_request_outcomes] == [
+            TaskStatus.NEEDS_ESCALATION,
+            TaskStatus.BLOCKED,
+            TaskStatus.SUCCEEDED,
+        ]
+        assert "dependent-request" not in typed_calls
+        assert any(
+            event["task_id"] == "request"
+            and event["status"] == "needs_escalation"
+            for event in typed_events
         )
 
         joined_dependencies = {}

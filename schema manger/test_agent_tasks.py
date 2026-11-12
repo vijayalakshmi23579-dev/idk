@@ -8,6 +8,7 @@ import agent_tasks
 from agent_tasks import AgentTasksInput, AgentTasksTool, _verify_task_result
 from execute import execute_tool
 from api import get_active_model
+from agent_contracts import TaskResultEnvelope
 from messages import ToolResultMessage, create_assistant_message
 from model_router import resolve_task_model
 from query_transitions import Terminal
@@ -50,6 +51,7 @@ async def main():
         prompts: dict[str, str] = {}
         worker_tools: dict[str, frozenset[str]] = {}
         worker_models: dict[str, str] = {}
+        worker_model_attempts: dict[str, list[str]] = {}
         verifier_models: dict[str, str] = {}
         verifier_tools: dict[str, frozenset[str]] = {}
         verifier_prompts: dict[str, str] = {}
@@ -67,6 +69,54 @@ async def main():
         )
         assert single_result.data["mode"] == "single"
         assert not single_result.data["tasks"]
+
+        try:
+            await AgentTasksTool.call(
+                AgentTasksInput(
+                    tasks=[
+                        {"id": "input-budget-a", "instruction": "A"},
+                        {"id": "input-budget-b", "instruction": "B"},
+                        {"id": "input-budget-c", "instruction": "C"},
+                    ],
+                    estimate=SplitEstimate(
+                        estimated_steps=12,
+                        sequential_dependency=False,
+                        independent_branches=3,
+                        read_heavy=True,
+                        disjoint_writes=False,
+                        uncertain_steps=False,
+                    ),
+                    run_budget={"max_input_tokens": 200_000},
+                ),
+                make_context(root),
+            )
+            raise AssertionError("aggregate input-token cap should reject oversized DAG")
+        except ValueError as error:
+            assert "Declared Task budgets exceed the aggregate" in str(error)
+
+        try:
+            await AgentTasksTool.call(
+                AgentTasksInput(
+                    tasks=[
+                        {"id": "attempt-budget-a", "instruction": "A"},
+                        {"id": "attempt-budget-b", "instruction": "B"},
+                        {"id": "attempt-budget-c", "instruction": "C"},
+                    ],
+                    estimate=SplitEstimate(
+                        estimated_steps=12,
+                        sequential_dependency=False,
+                        independent_branches=3,
+                        read_heavy=True,
+                        disjoint_writes=False,
+                        uncertain_steps=False,
+                    ),
+                    run_budget={"max_provider_attempts": 50},
+                ),
+                make_context(root),
+            )
+            raise AssertionError("aggregate provider-attempt cap should reject oversized DAG")
+        except ValueError as error:
+            assert "Declared Task budgets exceed the aggregate" in str(error)
 
         async def fake_query(params):
             nonlocal started, active_readers, active_writers
@@ -109,10 +159,61 @@ async def main():
             prompts[task_id] = prompt
             worker_tools[task_id] = worker.allowed_tool_names
             worker_models[task_id] = worker.model_override
+            worker_model_attempts.setdefault(task_id, []).append(worker.model_override)
             worker_budgets[task_id] = (
                 params.max_turns, params.max_output_tokens_override,
             )
 
+            if task_id == "needs-escalation":
+                if len(worker_model_attempts[task_id]) == 1:
+                    message = create_assistant_message(
+                        content=json.dumps({
+                            "status": "needs_escalation",
+                            "summary": "The worker found an unresolved interface.",
+                            "output": {"question": "Which interface should be used?"},
+                            "diagnostics": "The declared inputs do not identify the target API.",
+                        }),
+                        stop_reason="end_turn",
+                        usage={"input_tokens": 11, "output_tokens": 7},
+                    )
+                else:
+                    message = create_assistant_message(
+                        content="Resolved after stronger-tier review",
+                        stop_reason="end_turn",
+                        usage={"input_tokens": 13, "output_tokens": 5},
+                    )
+                params.messages.append(message)
+                yield message
+                yield Terminal(reason="completed")
+                return
+            if task_id in ("contract-change", "budget-limited-escalation"):
+                status = (
+                    "contract_change_request"
+                    if task_id == "contract-change" else "needs_escalation"
+                )
+                message = create_assistant_message(
+                    content=json.dumps({
+                        "status": status,
+                        "summary": "The worker cannot continue under this contract.",
+                        "output": {"reason": "scope or budget"},
+                    }),
+                    stop_reason="end_turn",
+                    usage={"output_tokens": 4},
+                )
+                params.messages.append(message)
+                yield message
+                yield Terminal(reason="completed")
+                return
+            if task_id == "input-budget-overrun":
+                message = create_assistant_message(
+                    content="This response exceeds its input budget",
+                    stop_reason="end_turn",
+                    usage={"input_tokens": 5, "output_tokens": 1},
+                )
+                params.messages.append(message)
+                yield message
+                yield Terminal(reason="completed")
+                return
             if task_id == "tool-error":
                 yield ToolResultMessage(
                     tool_use_id="failed-call", content="failed", is_error=True,
@@ -155,6 +256,10 @@ async def main():
                 assert active_writers == 0
                 output = f"{task_id} output"
                 active_readers -= 1
+            elif task_id in (
+                "blocked-dependent", "expansion-control", "expansion-observer",
+            ):
+                output = f"{task_id} output"
             elif task_id == "schema":
                 output = json.dumps({
                     "summary": "Typed result",
@@ -165,6 +270,11 @@ async def main():
                     "summary": "Invalid typed result",
                     "output": {"answer": 42},
                 })
+            elif task_id == "schema-invalid-recovery":
+                output = json.dumps({
+                    "summary": "Recovered typed result",
+                    "output": {"answer": "42"},
+                })
             elif task_id == "token-limit":
                 output = "over budget"
             else:
@@ -174,7 +284,10 @@ async def main():
                 assert worker.file_scope.check_access("Write", second_path) is not None
                 active_writers += 1
                 output = "combined output"
-                with open(output_path, "w", encoding="utf-8") as output_file:
+                staged_output_path = worker.file_scope.execution_path(
+                    "Write", output_path,
+                )
+                with open(staged_output_path, "w", encoding="utf-8") as output_file:
                     json.dump({"status": "combined", "count": 2}, output_file)
                 active_writers -= 1
 
@@ -260,6 +373,8 @@ async def main():
                     {
                         "id": "combine",
                         "instruction": "Combine the findings",
+                        "assumptions": ["Both source files use UTF-8"],
+                        "join_criteria": ["The combined count equals both inputs"],
                         "needs": ["first", "second", "schema"],
                         "write_files": [output_path],
                         "acceptance": [
@@ -337,6 +452,8 @@ async def main():
         ]
         assert "first output" in prompts["combine"]
         assert "second output" in prompts["combine"]
+        assert "Both source files use UTF-8" in prompts["combine"]
+        assert "The combined count equals both inputs" in prompts["combine"]
         assert '"answer": "42"' in prompts["combine"]
         assert worker_tools["first"] == frozenset({"Read"})
         assert "Task" not in worker_tools["combine"]
@@ -473,6 +590,40 @@ async def main():
             assert "incomplete or was interrupted" in str(error)
 
         try:
+            AgentTasksInput(
+                reconcile_run_id="interrupted-run",
+                side_effects_reviewed=False,
+            )
+            raise AssertionError("reconciliation must require side-effect review")
+        except Exception as error:
+            assert "Review interrupted workspace side effects" in str(error)
+
+        reconcile_input = AgentTasksInput(
+            reconcile_run_id="interrupted-run",
+            side_effects_reviewed=True,
+        )
+        reconcile_permission = await agent_tasks._check_permissions(
+            reconcile_input, recovery_context,
+        )
+        assert reconcile_permission.behavior == "ask"
+        assert "does not undo changes" in reconcile_permission.message
+        reconciled = await AgentTasksTool.call(
+            reconcile_input,
+            recovery_context,
+        )
+        assert reconciled.data["mode"] == "reconciled"
+        assert reconciled.data["run_persisted"] is True
+        assert reconciled.data["reconciled_task_ids"] == [interrupted_spec.id]
+        reconciled_record = recovery_context._store.get_task_run(
+            "interrupted-run", root, recovery_context.session_id,
+        )
+        assert reconciled_record["run_status"] == "completed"
+        assert reconciled_record["side_effects_reviewed"] is True
+        assert reconciled_record["reconciled_at"] is not None
+        assert reconciled_record["outcomes"][interrupted_spec.id]["status"] == "failed"
+        assert reconciled_record["failed_task_ids"] == [interrupted_spec.id]
+
+        try:
             await AgentTasksTool.call(
                 AgentTasksInput(
                     recovery_of_run=result.data["run_id"],
@@ -561,6 +712,199 @@ async def main():
             recovery_result.data, "recovery-call",
         )
         assert result.data["run_id"] in recovery_wire["content"]
+
+        try:
+            await AgentTasksTool.call(
+                AgentTasksInput(
+                    recovery_of_run=result.data["run_id"],
+                    tasks=[{
+                        "id": "duplicate-leaf-recovery",
+                        "instruction": "Do not repeat a completed failed-leaf recovery",
+                        "recovery_of": "tool-error",
+                    }],
+                ),
+                recovery_context,
+            )
+            raise AssertionError("a recovered leaf must not be retried twice")
+        except ValueError as error:
+            assert "already has a recovery run" in str(error)
+
+        agent_tasks.query = fake_query
+        try:
+            second_recovery = await AgentTasksTool.call(
+                AgentTasksInput(
+                    recovery_of_run=result.data["run_id"],
+                    tasks=[{
+                        "id": "schema-invalid-recovery",
+                        "instruction": "Recover the other failed leaf",
+                        "recovery_of": "schema-invalid",
+                        "output_schema": {
+                            "type": "object",
+                            "properties": {"answer": {"type": "string"}},
+                            "required": ["answer"],
+                            "additionalProperties": False,
+                        },
+                    }],
+                ),
+                recovery_context,
+            )
+        finally:
+            agent_tasks.query = original_query
+        assert second_recovery.data["tasks"][0]["status"] == "succeeded"
+        recovered_run = recovery_context._store.get_task_run(
+            result.data["run_id"], root,
+        )
+        assert recovered_run["recovered_task_runs"] == {
+            "tool-error": recovery_result.data["run_id"],
+            "schema-invalid": second_recovery.data["run_id"],
+        }
+
+        agent_tasks.query = fake_query
+        try:
+            escalation_result = await AgentTasksTool.call(
+                AgentTasksInput(
+                    tasks=[
+                        {
+                            "id": "needs-escalation",
+                            "instruction": "Ask the planner to resolve this ambiguity",
+                            "complexity": 1,
+                        },
+                        {
+                            "id": "blocked-dependent",
+                            "instruction": "Must wait for the unresolved interface",
+                            "needs": ["needs-escalation"],
+                        },
+                        {
+                            "id": "contract-change",
+                            "instruction": "Request a parent-owned contract change",
+                        },
+                        {
+                            "id": "contract-dependent",
+                            "instruction": "Wait for the changed contract",
+                            "needs": ["contract-change"],
+                        },
+                        {
+                            "id": "budget-limited-escalation",
+                            "instruction": "Do not exceed the single-provider-attempt budget",
+                            "complexity": 1,
+                            "budget": {"max_provider_attempts": 1},
+                        },
+                        {
+                            "id": "budget-dependent",
+                            "instruction": "Wait for the budget-limited task",
+                            "needs": ["budget-limited-escalation"],
+                        },
+                        {
+                            "id": "expansion-control",
+                            "instruction": "Continue an independent branch",
+                        },
+                        {
+                            "id": "expansion-observer",
+                            "instruction": "Continue another independent branch",
+                        },
+                    ],
+                    estimate=SplitEstimate(
+                        estimated_steps=12,
+                        sequential_dependency=False,
+                        independent_branches=5,
+                        read_heavy=True,
+                        disjoint_writes=False,
+                        uncertain_steps=False,
+                    ),
+                ),
+                recovery_context,
+            )
+        finally:
+            agent_tasks.query = original_query
+        escalation_outcomes = {
+            item["id"]: item for item in escalation_result.data["tasks"]
+        }
+        assert escalation_outcomes["needs-escalation"]["status"] == "succeeded"
+        assert escalation_outcomes["needs-escalation"]["summary"] == (
+            "Resolved after stronger-tier review"
+        )
+        assert escalation_outcomes["needs-escalation"]["escalations"] == 1
+        assert len(escalation_outcomes["needs-escalation"]["models_used"]) == 2
+        assert worker_budgets["needs-escalation"] == (7, 7_993)
+        assert escalation_outcomes["needs-escalation"]["usage"]["calls"] == 2
+        assert escalation_outcomes["needs-escalation"]["usage"]["input_tokens"] == 24
+        assert escalation_outcomes["needs-escalation"]["usage"]["provider_attempts"] == 2
+        assert escalation_outcomes["needs-escalation"]["usage"]["output_tokens"] == 12
+        assert worker_model_attempts["needs-escalation"][0] != worker_model_attempts[
+            "needs-escalation"
+        ][1]
+        assert "Previous lower-tier attempt" in prompts["needs-escalation"]
+        assert "99989 input tokens" in prompts["needs-escalation"]
+        assert "31 provider attempts" in prompts["needs-escalation"]
+        assert escalation_outcomes["blocked-dependent"]["status"] == "succeeded"
+        assert escalation_outcomes["contract-change"]["status"] == "contract_change_request"
+        assert len(worker_model_attempts["contract-change"]) == 1
+        assert escalation_outcomes["contract-dependent"]["status"] == "blocked"
+        assert escalation_outcomes["budget-limited-escalation"]["status"] == "needs_escalation"
+        assert len(worker_model_attempts["budget-limited-escalation"]) == 1
+        assert escalation_outcomes["budget-dependent"]["status"] == "blocked"
+        assert escalation_outcomes["expansion-control"]["status"] == "succeeded"
+        assert escalation_outcomes["expansion-observer"]["status"] == "succeeded"
+        persisted_escalation_events = recovery_context._store.get_task_events(
+            recovery_context.session_id, escalation_result.data["run_id"],
+        )
+        assert any(
+            event["task_id"] == "needs-escalation"
+            and event["status"] == "succeeded"
+            and len(event["model_ids"]) == 2
+            for event in persisted_escalation_events
+        )
+
+        reopened_context = make_context(root)
+        reopened_context._store = Store(session_db_path)
+        reopened_record = agent_tasks._load_task_run(
+            reopened_context, escalation_result.data["run_id"],
+        )
+        assert isinstance(
+            reopened_record["outcomes"]["needs-escalation"].output,
+            TaskResultEnvelope,
+        )
+        reopened_context._store.close()
+
+        agent_tasks.query = fake_query
+        try:
+            input_limit_result = await AgentTasksTool.call(
+                AgentTasksInput(
+                    tasks=[
+                        {
+                            "id": "input-budget-overrun",
+                            "instruction": "Respect the four-token input ceiling",
+                            "complexity": 1,
+                            "budget": {"max_input_tokens": 4},
+                        },
+                        {
+                            "id": "expansion-control",
+                            "instruction": "Keep the first independent branch",
+                        },
+                        {
+                            "id": "expansion-observer",
+                            "instruction": "Keep the second independent branch",
+                        },
+                    ],
+                    estimate=SplitEstimate(
+                        estimated_steps=12,
+                        sequential_dependency=False,
+                        independent_branches=3,
+                        read_heavy=True,
+                        disjoint_writes=False,
+                        uncertain_steps=False,
+                    ),
+                ),
+                recovery_context,
+            )
+        finally:
+            agent_tasks.query = original_query
+        input_limit_outcome = next(
+            item for item in input_limit_result.data["tasks"]
+            if item["id"] == "input-budget-overrun"
+        )
+        assert input_limit_outcome["status"] == "failed"
+        assert "input token budget" in input_limit_outcome["error"]
 
         verifier_scope = TaskFileScope(
             task_id="verifier-tests",

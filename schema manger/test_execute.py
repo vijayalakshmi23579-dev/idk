@@ -1,5 +1,8 @@
 """test_execute.py — no network. Mock tools exercise every pipeline stage."""
 import asyncio
+import os
+import shutil
+import tempfile
 from pydantic import BaseModel
 
 from execute import execute_tool, ExecutionResult, CANCEL_MESSAGE
@@ -8,6 +11,9 @@ from state import AppState, ToolPermissionContext, FileStateCache
 from tool import ToolUseContext, ToolResult, build_tool, ValidationResult
 from permission_types import PermissionPassthroughDecision
 from registry import register, clear
+from task_scheduler import FileLeaseRegistry, TaskFileScope
+from tools.read import ReadTool
+from tools.write import WriteTool
 
 
 class In(BaseModel):
@@ -196,6 +202,56 @@ async def main():
     assert r.is_error is False
     assert called["n"] == 1
     print("✅ backfill_observable_input OK")
+
+    # ── 12. Task file tools use staged paths but preserve declared-path permissions ──
+    clear()
+    register(ReadTool)
+    register(WriteTool)
+    with tempfile.TemporaryDirectory() as root:
+        original_path = os.path.join(root, "existing.txt")
+        with open(original_path, "w", encoding="utf-8") as source:
+            source.write("before")
+        lease_registry = FileLeaseRegistry(root)
+        canonical_path = lease_registry.resolve(original_path)
+        write_paths = frozenset({canonical_path})
+        lease_registry.acquire("staged-worker", write_paths)
+        staging_root = tempfile.mkdtemp(prefix="execute-stage-test-")
+        staged_path = os.path.join(staging_root, "existing.txt")
+        shutil.copy2(original_path, staged_path)
+        scope = TaskFileScope(
+            task_id="staged-worker",
+            project_root=root,
+            read_paths=frozenset({canonical_path}),
+            write_paths=write_paths,
+            leases=lease_registry,
+            staging_root=staging_root,
+            baseline_write_hashes={canonical_path: "baseline"},
+        )
+        context = make_ctx()
+        context.project_root = root
+        context.file_scope = scope
+        read_result = await execute_tool(
+            {"id": "staged-read", "name": "Read", "input": {"file_path": original_path}},
+            context,
+        )
+        assert not read_result.is_error
+        assert "before" in read_result.result_message.content
+        assert staging_root not in read_result.result_message.content
+
+        write_result = await execute_tool(
+            {
+                "id": "staged-write", "name": "Write",
+                "input": {"file_path": original_path, "content": "after"},
+            },
+            context,
+        )
+        assert not write_result.is_error
+        assert open(staged_path, encoding="utf-8").read() == "after"
+        assert open(original_path, encoding="utf-8").read() == "before"
+        assert staging_root not in write_result.result_message.content
+        shutil.rmtree(staging_root)
+        lease_registry.release("staged-worker")
+    print("✅ Task Read/Write stay staged until scheduler commit")
 
     print("\n🎉 All execute.py tests passed")
 

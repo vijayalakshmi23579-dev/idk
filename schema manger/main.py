@@ -49,6 +49,9 @@ from tools.bash import BashTool
 from tools.edit import EditTool
 from tools.read import ReadTool
 from tools.write import WriteTool
+from workflows import (
+    WorkflowListTool, WorkflowPromoteTool, WorkflowProposeTool, WorkflowRunTool,
+)
 
 # ── Tool registration ──
 register(ReadTool)
@@ -59,6 +62,10 @@ register(TodoWriteTool)
 register(AgentTasksTool)
 register(MemorySearchTool)
 register(MemoryExpandTool)
+register(WorkflowProposeTool)
+register(WorkflowRunTool)
+register(WorkflowListTool)
+register(WorkflowPromoteTool)
 
 
 SYSTEM_PROMPT = """You are a coding assistant running in a terminal on the user's machine.
@@ -76,6 +83,13 @@ Available tools:
 - MemorySearch(query, limit?): searches this session's saved messages.
 - MemoryExpand(node_id, kind?): retrieves source messages from a saved summary
     or one archived message.
+- WorkflowPropose(definition): stores a versioned, read-only Read workflow in
+    session quarantine. Include an input/output schema and test cases.
+- WorkflowRun(workflow_id, version, inputs): runs a quarantined or promoted
+    read-only workflow through normal tool permissions.
+- WorkflowList(): lists session and promoted workflows.
+- WorkflowPromote(workflow_id, version): asks permission, runs declared tests,
+    and promotes only after repeated successful use across distinct queries.
 
 Use memory search/expansion when prior stored context is relevant. Read files
 before editing them.
@@ -118,8 +132,14 @@ def build_full_system_prompt() -> str:
         "- Task(tasks): runs a DAG of isolated task workers when the deterministic split "
         "gate selects wide execution. Declare an estimate (steps, sequential dependency, "
         "independent branches, read-heavy, disjoint writes, uncertainty), `needs`, exact `read_files`/"
-        "`write_files`, `non_goals`, acceptance checks, optional `output_schema`, and a "
-        "per-node `budget`. Read-only tasks fan out; writers run exclusively and workers "
+        "`write_files`, `assumptions`, `non_goals`, `join_criteria`, `join_checks`, "
+        "acceptance checks, "
+        "optional `output_schema`, and a per-node `budget`. Use `inspect_run_id` "
+        "to inspect persisted work; only reconcile an interrupted run after "
+        "reviewing partial side effects and confirming explicit approval. "
+        "Read-only tasks and "
+        "conflict-free disjoint writers may fan out; overlapping scopes require "
+        "dependency ordering. Workers "
         "return bounded summaries plus artifact pointers."
     )
     task_guidance = (
@@ -129,10 +149,18 @@ def build_full_system_prompt() -> str:
         "a realistic split estimate; the runtime keeps sequential or <=8-step work single, "
         "uses wide execution only for at least 3 independent branches with read-heavy or "
         "disjoint work, and explores uncertain work in the parent first. Declare dependencies and exact "
-        "file scopes, and set each task's complexity from 1 to 5. Use `tier_hint` only "
+        "file scopes, assumptions, and join criteria, and set each task's complexity "
+        "from 1 to 5. Use `tier_hint` only "
         "when the default mapping is unsuitable. Set acceptance checks and budgets; use an "
         "output schema for structured dependencies. Workers do not delegate or coordinate "
-        "with one another. Review their summaries and changes before reporting completion."
+        "with one another. A `needs_escalation` response may trigger one stronger-tier "
+        "retry charged to the same node budget. Unresolved escalation or contract-change "
+        "requests return to you for assessment; they do not grant wider scope. Use "
+        "WorkflowPropose/Run/List/Promote only for declarative read-only Read sequences. "
+        "Candidates stay session-quarantined; promotion requires user approval, passing "
+        "declared tests, and repeated successful uses. Schemas never grant capabilities. "
+        "bounded recovery for an unchanged failed leaf; create a new DAG when the contract "
+        "or scope must change. Review worker results and changes before reporting completion."
     )
     runtime_prompt = SYSTEM_PROMPT.replace(
         "{task_tool_description}", task_description,

@@ -78,7 +78,27 @@ def resolve_task_model(
     return configured_model
 
 
+def resolve_next_task_model(
+    current_tier: Tier,
+    current_model: str,
+    *,
+    active_model: str | None = None,
+) -> tuple[Tier, str] | None:
+    """Return the next stronger configured tier with a distinct model."""
+    order: tuple[Tier, ...] = ("T1", "T2", "T3")
+    current_index = order.index(current_tier)
+    for tier in order[current_index + 1:]:
+        try:
+            candidate = resolve_task_model(5, tier, active_model=active_model)
+        except ValueError:
+            continue
+        if candidate.casefold() != current_model.casefold():
+            return tier, candidate
+    return None
+
+
 __all__ = [
     "COMPLEXITY_TIERS", "Tier", "TierConfiguration", "TierProfile",
-    "load_tier_configuration", "resolve_task_model", "resolve_task_tier",
+    "load_tier_configuration", "resolve_next_task_model",
+    "resolve_task_model", "resolve_task_tier",
 ]

@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 from model_router import (
     load_tier_configuration,
+    resolve_next_task_model,
     resolve_task_model,
     resolve_task_tier,
 )
@@ -34,6 +35,15 @@ def main():
             assert resolve_task_model(1) == "test/cheap"
             assert resolve_task_model(4) == "test/mid"
             assert resolve_task_model(5, active_model="test/parent") == "test/parent"
+            assert resolve_next_task_model(
+                "T1", "test/cheap", active_model="test/parent",
+            ) == ("T2", "test/mid")
+            assert resolve_next_task_model(
+                "T2", "test/mid", active_model="test/parent",
+            ) == ("T3", "test/parent")
+            assert resolve_next_task_model(
+                "T3", "test/parent", active_model="test/parent",
+            ) is None
             with patch("api.get_active_model", return_value="test/strong"):
                 assert resolve_task_model(5) == "test/strong"
 

@@ -8,7 +8,7 @@ from typing import Any
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError
 
-from agent_contracts import AcceptanceCheck
+from agent_contracts import AcceptanceCheck, JoinCheck
 
 
 def _payload(check: AcceptanceCheck) -> dict[str, Any] | None:
@@ -130,4 +130,30 @@ def evaluate_acceptance(
         return False
 
 
-__all__ = ["acceptance_path", "evaluate_acceptance", "validate_acceptance_check"]
+def validate_join_check(check: JoinCheck) -> None:
+    if check.kind != "schema":
+        return
+    try:
+        Draft202012Validator.check_schema(check.schema_definition or {})
+    except SchemaError as error:
+        raise ValueError("Join check contains an invalid JSON Schema") from error
+
+
+def evaluate_join_check(
+    check: JoinCheck,
+    dependencies: dict[str, Any],
+) -> bool:
+    if check.kind == "schema":
+        return Draft202012Validator(check.schema_definition or {}).is_valid(dependencies)
+    assert check.left is not None and check.right is not None
+    left = dependencies.get(check.left.dependency_id)
+    right = dependencies.get(check.right.dependency_id)
+    left_found, left_value = _json_path_value(left, check.left.json_path)
+    right_found, right_value = _json_path_value(right, check.right.json_path)
+    return left_found and right_found and left_value == right_value
+
+
+__all__ = [
+    "acceptance_path", "evaluate_acceptance", "evaluate_join_check",
+    "validate_acceptance_check", "validate_join_check",
+]

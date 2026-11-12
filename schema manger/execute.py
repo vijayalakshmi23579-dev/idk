@@ -207,6 +207,25 @@ async def execute_tool(
                 tool_use_id, tool_name, f"Updated input invalid: {e}",
             )
 
+    staged_path_alias: tuple[str, str] | None = None
+    if (
+        file_scope is not None
+        and getattr(file_scope, "staging_root", None) is not None
+        and tool_name in ("Read", "Edit", "Write")
+    ):
+        try:
+            original_path = getattr(parsed_input, "file_path", "")
+            staged_path = file_scope.execution_path(tool_name, original_path)
+            original_canonical = file_scope.leases.resolve(original_path)
+            parsed_input = parsed_input.model_copy(
+                update={"file_path": staged_path},
+            )
+            staged_path_alias = (original_canonical, staged_path)
+        except Exception as e:
+            return _error_result(
+                tool_use_id, tool_name, f"Could not resolve staged path: {e}",
+            )
+
     # ── 8. Execute ──
     try:
         tool_result: ToolResult = await tool.call(
@@ -214,7 +233,32 @@ async def execute_tool(
         )
     except Exception as e:
         logger.error("Tool %s call() raised: %s", tool_name, e)
-        return _error_result(tool_use_id, tool_name, f"Tool execution failed: {e}")
+        error_message = str(e)
+        if file_scope is not None and getattr(file_scope, "staging_root", None):
+            error_message = error_message.replace(
+                file_scope.staging_root + os.sep,
+                file_scope.project_root + os.sep,
+            )
+        return _error_result(
+            tool_use_id, tool_name, f"Tool execution failed: {error_message}",
+        )
+
+    if staged_path_alias is not None:
+        original_path, staged_path = staged_path_alias
+        cache = getattr(context, "read_file_state", None)
+        staged_state = cache.get(staged_path) if cache is not None else None
+        if staged_state is not None:
+            extras = {
+                key: value for key, value in staged_state.items()
+                if key not in ("content", "mtime")
+            }
+            cache.set(
+                original_path,
+                staged_state.get("content", ""),
+                staged_state.get("mtime", 0),
+                **extras,
+            )
+        tool_result.data = file_scope.externalize_result(tool_result.data)
 
     # ── 9. Persist large results ──
     data_for_model = await _maybe_persist_large_result(tool, tool_result.data, tool_use_id)

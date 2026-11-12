@@ -143,6 +143,36 @@ def main():
     progress_run = store.get_task_run("run-progress", tmp, sid)
     assert progress_run["run_status"] == "finalizing"
     assert progress_run["progress"]["worker-b"]["status"] == "succeeded"
+    store.save_task_run(sid, "run-escalation", tmp, {
+        "schema_version": "1.0",
+        "run_id": "run-escalation",
+        "run_status": "running",
+        "task_specs": {"worker-d": {"schema_version": "1.0"}},
+        "progress": {},
+    })
+    store.append_task_event(sid, "run-escalation", {
+        "schema_version": "1.0",
+        "type": "task_lifecycle",
+        "event_id": "event-escalation-start",
+        "run_id": "run-escalation",
+        "attempt_id": "attempt-d",
+        "task_id": "worker-d",
+        "status": "started",
+        "needs": [],
+        "occurred_at": 124.0,
+    })
+    store.append_task_event(sid, "run-escalation", {
+        "schema_version": "1.0",
+        "type": "task_lifecycle",
+        "event_id": "event-escalation-request",
+        "run_id": "run-escalation",
+        "attempt_id": "attempt-d",
+        "task_id": "worker-d",
+        "status": "needs_escalation",
+        "needs": [],
+        "occurred_at": 125.0,
+    })
+    assert store.get_task_run("run-escalation", tmp, sid)["run_status"] == "finalizing"
     store.save_task_run(sid, "run-interrupted", tmp, {
         "schema_version": "1.0",
         "run_id": "run-interrupted",
@@ -189,6 +219,8 @@ def main():
     store = Store(db)
     assert store.get_artifact_path(artifact_one["storage_key"]) == stored_path
     assert store.get_artifact_path("../outside") is None
+    Path(stored_path).write_bytes(b"corrupted artifact")
+    assert store.get_artifact_path(artifact_one["storage_key"]) is None
     print("✅ Content-addressed artifacts persist and deduplicate")
 
     # ── 9. get_view assembles plan + summary + tail ──
@@ -263,6 +295,61 @@ def main():
     except ValueError:
         pass
     print("✅ Orphan summary rejected OK")
+
+    orphan_source = os.path.join(tmp, "orphan.bin")
+    Path(orphan_source).write_bytes(b"orphan artifact")
+    orphan_artifact = store.put_artifact(orphan_source)
+    store.append_message(
+        sid,
+        "assistant",
+        f"Referenced artifact {artifact_one['storage_key']}",
+    )
+    preview = store.collect_unreferenced_artifacts()
+    assert preview["dry_run"] is True
+    assert orphan_artifact["storage_key"] in preview["candidates"]
+    assert artifact_one["storage_key"] not in preview["candidates"]
+    assert store.get_artifact_path(orphan_artifact["storage_key"]) is not None
+    removed = store.collect_unreferenced_artifacts(dry_run=False)
+    assert orphan_artifact["storage_key"] in removed["deleted"]
+    assert store.get_artifact_path(orphan_artifact["storage_key"]) is None
+    assert store.get_artifact_path(artifact_one["storage_key"]) is None
+    print("✅ Artifact collection is dry-run by default and preserves referenced blobs")
+
+    workflow_definition = {
+        "schema_version": "1.0",
+        "id": "read-package-context",
+        "version": 1,
+        "description": "Read a declared group of project files",
+        "steps": [],
+    }
+    store.save_workflow_definition(tmp, sid, workflow_definition)
+    assert len(store.list_workflow_definitions(tmp, sid)) == 1
+    assert store.list_workflow_definitions(tmp, "other-session") == []
+    assert store.get_workflow_definition(
+        tmp, "read-package-context", 1, "other-session",
+    ) is None
+    try:
+        store.promote_workflow_definition(
+            tmp, "read-package-context", 1, sid,
+        )
+        raise AssertionError("workflow promotion should require successful uses")
+    except ValueError as error:
+        assert "requires 3 successful runs across 2 query runs" in str(error)
+    store.record_workflow_run(
+        tmp, "read-package-context", 1, sid, "query-a", True,
+    )
+    store.record_workflow_run(
+        tmp, "read-package-context", 1, sid, "query-a", True,
+    )
+    store.record_workflow_run(
+        tmp, "read-package-context", 1, sid, "query-b", True,
+    )
+    promoted_usage = store.promote_workflow_definition(
+        tmp, "read-package-context", 1, sid,
+    )
+    assert promoted_usage == {"successful_runs": 3, "query_runs": 2}
+    assert len(store.list_workflow_definitions(tmp, "other-session")) == 1
+    print("✅ Workflow quarantine, use evidence, and promotion gates")
 
     store.close()
     print("\n🎉 All store.py tests passed")

@@ -59,6 +59,9 @@ async def main():
         assert len(report.results) == 90
 
         assert "Task(tasks)" in build_full_system_prompt()
+        assert "join_checks" in build_full_system_prompt()
+        assert "Unresolved escalation or contract-change" in build_full_system_prompt()
+        assert "one stronger-tier" in build_full_system_prompt()
         assert any(tool.name == "Task" for tool in _tools_for_context(ToolUseContext()))
         invalid_call = await execute_tool(
             {"id": "task-schema-check", "name": "Task", "input": {}},
