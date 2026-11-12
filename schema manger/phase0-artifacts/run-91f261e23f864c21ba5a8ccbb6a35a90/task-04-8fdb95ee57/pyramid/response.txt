@@ -1,0 +1,17 @@
+I'll start by inspecting the relevant fixture files to ground this answer in the actual benchmark context.
+
+
+I have the key evidence. The relevant passage is in `architecture.md` (line 12): *"Filesystem path checks and permission gates are application safeguards. The runtime has no OS-level shell sandbox."* Together with the note that the runner exposes scoped Read/Edit/Write tools, never Bash, and never executes dataset-supplied commands.
+
+This is a single analytical question grounded in files already read — not a multi-step branched file-work task — so I'll answer directly rather than spawning Task workers.
+
+## Answer
+
+**Distinguishing the two:**
+
+- **Application-level filesystem/permission safeguards:** These are policy controls enforced inside the runtime/benchmark runner — namely the scoped Read/Edit/Write tool surface, filesystem path checks, permission gates, and the rule that dataset-supplied commands are never executed. They are application-layer decisions about what a worker may touch.
+- **OS isolation:** Absent. The runtime has no OS-level shell sandbox (no container, namespace, seccomp, or equivalent OS confinement is claimed).
+
+**What must not be claimed about Bash sandboxing:**
+
+You must **not** claim that Bash is sandboxed at the OS level — indeed, Bash is not exposed at all; the runner exposes only Read/Edit/Write tools and never Bash, and it does not execute dataset-supplied commands. Equally, you must not re-label the application-level path/permission safeguards as an "OS-level Bash sandbox." The safeguards are application safeguards, and there is no OS-level shell sandbox for Bash to rely on.

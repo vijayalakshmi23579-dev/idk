@@ -1,0 +1,11 @@
+{
+  "task_id": "pipeline-06-user-ages",
+  "shape": "data_pipeline",
+  "baseline": "pyramid",
+  "model_id": "nvidia_nim/nvidia/nemotron-3.5-super-vl-120b-a12b",
+  "checks_passed": false,
+  "quality_score": 0.6666666666666666,
+  "tokens": 8020,
+  "api_calls": 3,
+  "duration_seconds": 4.977873272999204
+}

@@ -1,0 +1,14 @@
+The required files have been created:
+
+**`out/csv_tools.py`** – contains `parse_rows(text)` that uses Python's `csv` module (`csv.DictReader`) to parse the input CSV text and convert the `units` column to `int` and the `revenue` column to `float`.
+
+**`out/test_csv_tools.py`** – a pytest test that calls `parse_rows` with a two‑row CSV string and asserts the expected number of rows and the converted column types/values. 
+
+You can run the test with:
+
+```bash
+cd /tmp/phase0-case-tgl7x7lx/out
+pytest test_csv_tools.py
+```
+
+which will verify the functionality.

@@ -1,0 +1,5 @@
+Both files are created and verified:
+
+- **`out/report_format.py`** – defines `format_summary(metrics)` using `json.dumps(metrics, sort_keys=True)`, which always produces JSON with keys in a consistent alphabetical order.
+
+- **`out/test_report_format.py`** – contains `test_key_order_is_stable()` that calls `format_summary` twice and asserts the results are identical, and also checks that the output matches `json.dumps(metrics, sort_keys=True)`, confirming stable sorted key order.

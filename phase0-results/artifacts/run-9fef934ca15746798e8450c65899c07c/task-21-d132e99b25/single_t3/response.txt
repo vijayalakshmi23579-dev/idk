@@ -1,0 +1,10 @@
+Done. I read `events.json`, counted the `signup` events grouped by `source`, and wrote `/tmp/phase0-case-9okfym2l/out/signups.json` with:
+
+```json
+{
+  "social": 1,
+  "search": 1
+}
+```
+
+(signups: alice via social, cara via search)

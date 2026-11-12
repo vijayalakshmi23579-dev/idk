@@ -1,0 +1,11 @@
+{
+  "task_id": "research-06-provider-limits",
+  "shape": "breadth_research",
+  "baseline": "single_t2",
+  "model_id": "nvidia_nim/nvidia/nemotron-3.5-lightning-30b-a3b",
+  "checks_passed": false,
+  "quality_score": 0.0,
+  "tokens": 5470,
+  "api_calls": 6,
+  "duration_seconds": 26.86078164799983
+}

@@ -1,0 +1,14 @@
+This is a simple read-then-write task with one dependency and no parallel branches, so I'll complete it directly.
+
+From users.json:
+- Users: u1 (30), u2 (40), u3 (35)
+- Count: 3
+- Age sum: 105
+- Average age: 35
+
+
+Done. `out/user_stats.json` has been written with:
+
+- **user_count:** 3
+- **age_sum:** 105
+- **average_age:** 35

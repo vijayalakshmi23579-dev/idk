@@ -1,0 +1,23 @@
+I'll start by reading the available fixture files to understand the provider reliability controls context.
+
+
+## Summary: Provider Reliability Controls
+
+### Current Reliability Controls (Present)
+
+Based on `architecture.md` (lines 11–12), the following provider reliability controls are in place:
+
+1. **Bounded concurrency** — Provider calls have bounded concurrency limits.
+2. **Retry/fallback behavior** — Provider calls include retry and fallback mechanisms.
+3. **Application-level safeguards** — Filesystem path checks and permission gates act as safeguards (though there is no OS-level shell sandbox).
+
+### Missing Quota Limits
+
+The following quota limits are **not enforced**, as explicitly stated in `architecture.md` line 11:
+
+| Quota Limit | Status |
+|-------------|--------|
+| **RPM (Requests Per Minute)** | Not enforced |
+| **TPM (Tokens Per Minute)** | Not enforced |
+
+**Conclusion:** The system has bounded concurrency and retry/fallback for provider calls, but both RPM and TPM quota enforcement are missing and remain unimplemented.

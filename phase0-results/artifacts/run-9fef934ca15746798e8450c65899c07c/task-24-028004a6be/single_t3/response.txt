@@ -1,0 +1,16 @@
+# Puzzle 1 Solution
+
+**Puzzle:** A service starts with 48 queued jobs. It completes one third, then receives 7 more, then completes 9. How many remain?
+
+## Sequence of Operations
+
+| Step | Operation | Calculation | Jobs Remaining |
+|------|-----------|-------------|----------------|
+| 1 | Start | — | 48 |
+| 2 | Complete one third | 48 ÷ 3 = 16 completed; 48 − 16 = 32 | 32 |
+| 3 | Receive 7 more | 32 + 7 = 39 | 39 |
+| 4 | Complete 9 | 39 − 9 = 30 | 30 |
+
+## Final Remaining Job Count
+
+**30 jobs remain.**

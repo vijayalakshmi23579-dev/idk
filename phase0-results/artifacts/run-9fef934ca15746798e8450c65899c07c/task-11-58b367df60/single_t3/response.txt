@@ -1,0 +1,7 @@
+Both files are created. Let me verify the test passes:
+
+
+Done. Created:
+
+- **`out/metrics.py`** — `summarize_regions(rows)` returns a dict keyed by region, with `units` and `revenue` totals accumulated per region.
+- **`out/test_metrics.py`** — `test_north_rows_sum_to_five_units()` feeds two North rows (2 units + 3 units) and asserts `summary['North']['units'] == 5`.

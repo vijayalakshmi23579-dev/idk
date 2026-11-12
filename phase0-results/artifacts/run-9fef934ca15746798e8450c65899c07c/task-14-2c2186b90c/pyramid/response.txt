@@ -1,0 +1,12 @@
+The task is small: two files, one sequential dependency (module then test), fewer than eight steps, and no independent branches. I'll complete it directly rather than invoking the Task split gate.
+
+Let me create both files:
+
+
+Both files were created successfully.
+
+**Summary:**
+- `out/result_envelope.py` — defines `SCHEMA_VERSION = 1` and `build_result(node_id, summary, artifacts)` returning a versioned dictionary with `schema_version`, `node_id`, `summary`, and `artifacts` fields.
+- `out/test_result_envelope.py` — contains `test_build_result_has_schema_version_and_node_id`, which builds an envelope and asserts that `schema_version` matches the module constant and `node_id` matches the passed value.
+
+No Task invocation was needed: the work is well under eight steps, sequential (module then test), and lacks three independent read-heavy branches.

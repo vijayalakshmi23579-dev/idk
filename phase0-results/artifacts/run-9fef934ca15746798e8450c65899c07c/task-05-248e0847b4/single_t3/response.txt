@@ -1,0 +1,14 @@
+## Persisted Conversation and Memory Features
+
+Based on the fixture evidence (architecture.md, line 13), the persisted conversation and memory system works as follows:
+
+**SQLite as the persistence store**
+Session messages are stored **append-only in SQLite**. This means every conversation turn is written as an immutable record rather than overwritten, providing an immutable, auditable message history that supports recovery and replay.
+
+**FTS5 for search**
+The same SQLite layer uses **FTS5 (Full-Text Search version 5)** to index session messages, enabling fast full-text search across persisted conversations.
+
+**Summaries that retain source access**
+The system uses **summary DAGs** (directed acyclic graphs of summaries) together with **recoverable source messages**. Summarization compacts conversation context without discarding the originals: source messages remain recoverable, so summarized context can always be traced back to (and re-accessed from) the underlying raw messages rather than existing as a lossy, opaque abstraction.
+
+In short: append-only SQLite storage + FTS5 indexing + summary DAGs with recoverable source messages gives durable, searchable conversation memory where compaction never severs the link to the original source data.

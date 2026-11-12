@@ -1,0 +1,4 @@
+**Provider‑agnostic boundary:** The API adapter sits between the runtime’s internal message/model representation and the external LLM providers. It translates internal messages and tool definitions into a format that any provider can understand, and it normalizes the streaming events returned by those providers so the rest of the system sees a consistent, provider‑agnostic interface.
+
+**Adapter:** *API adapter* (as described in the architecture notes)  
+**Library:** *LiteLLM* (the target library the adapter converts messages and streaming events for)

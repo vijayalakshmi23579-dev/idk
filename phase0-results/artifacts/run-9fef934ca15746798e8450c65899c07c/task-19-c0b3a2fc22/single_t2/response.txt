@@ -1,0 +1,11 @@
+The `sales.csv` file has been read and the totals of `units` grouped by `date` have been written to `out/date_totals.json`:
+
+```json
+{
+  "2026-01-01": 3,
+  "2026-01-02": 5,
+  "2026-01-03": 5
+}
+```
+
+The file is now available at `/tmp/phase0-case-ymzunkyn/out/date_totals.json`.

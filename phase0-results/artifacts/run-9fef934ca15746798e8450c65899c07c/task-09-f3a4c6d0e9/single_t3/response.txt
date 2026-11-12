@@ -1,0 +1,5 @@
+Done. I created both files:
+
+**`out/name_utils.py`** — `normalize_name(value)` uses `value.split()` (which strips leading/trailing whitespace and splits on any internal whitespace), `" ".join(...)` (collapsing internal whitespace to single spaces), and `.casefold()` (case-insensitive folding).
+
+**`out/test_name_utils.py`** — a focused test asserting `normalize_name('  Ada   LOVELACE ')` returns `'ada lovelace'`.

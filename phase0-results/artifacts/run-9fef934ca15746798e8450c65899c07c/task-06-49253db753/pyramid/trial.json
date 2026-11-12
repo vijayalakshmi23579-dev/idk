@@ -1,0 +1,11 @@
+{
+  "task_id": "research-06-provider-limits",
+  "shape": "breadth_research",
+  "baseline": "pyramid",
+  "model_id": "nvidia_nim/nvidia/nemotron-3.5-super-vl-120b-a12b",
+  "checks_passed": true,
+  "quality_score": 1.0,
+  "tokens": 7129,
+  "api_calls": 2,
+  "duration_seconds": 9.839587397999821
+}

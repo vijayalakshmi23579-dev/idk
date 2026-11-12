@@ -1,0 +1,5 @@
+**Provider‑agnostic boundary**  
+The architecture defines the boundary at the **API adapter**, which sits between the internal message‑and‑tool layer and the external provider‑specific implementations. Its responsibility is to convert internal representations for the **LiteLLM** library and to normalize provider streaming events, thereby insulating the rest of the system from provider‑specific details.
+
+**Adapter:** API adapter  
+**Library:** LiteLLM

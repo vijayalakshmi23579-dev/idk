@@ -1,0 +1,10 @@
+**Persisted conversation and memory features (as described in the benchmark evidence pack)**  
+
+| Feature | How it works | What it gives you |
+|---------|--------------|-------------------|
+| **SQLite storage** | All session messages are stored **append‑only** in a SQLite database. Each new turn is added as a new row, so the history grows sequentially without in‑place updates. | Reliable, ACID‑guaranteed persistence; easy to query or back up the whole conversation state. |
+| **FTS5 full‑text search** | A virtual FTS5 table is built over the message columns (typically `content` or `text`). This enables fast, relevance‑ranked search across the entire conversation history. | You can locate specific facts, topics, or user prompts even in long‑running sessions without scanning every row. |
+| **Summary DAGs** | Summaries are maintained as a **directed‑acyclic graph (DAG)** of summary nodes. Each node represents a condensed view of a subset of messages and stores references (e.g., message IDs, timestamps) to the original source entries. | Provides a concise “executive‑summary” of the conversation while still being able to trace back to the exact source messages that contributed to any summary point. |
+| **Recoverable source access** | Because each summary node keeps a pointer/link to the underlying source messages, you can **retrieve the original messages** that a summary references. The DAG structure allows walking forward/backward through successive summaries, always retaining the provenance chain. | Guarantees that a summary is never “black‑boxed”; auditors or the model can see exactly which earlier utterances produced the summarized insight. |
+
+In short, the system persists conversation state in an **append‑only SQLite database**, accelerates lookups with an **FTS5 full‑text index**, and keeps **summary DAGs** that each store explicit references to the original messages. This combination gives you durable, searchable conversation history and a memory‑like ability to condense and later reconstruct the source of any summarized content.

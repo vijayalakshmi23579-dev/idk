@@ -1,0 +1,80 @@
+[project]
+user_env = []
+session_timeout = 3600
+user_session_timeout = 1296000
+cache = false
+persist_user_env = false
+mask_user_env = true
+
+allow_origins = [
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
+]
+
+[features]
+unsafe_allow_html = false
+latex = false
+user_message_markdown = true
+user_message_autoscroll = true
+assistant_message_autoscroll = true
+auto_tag_thread = true
+edit_message = true
+allow_thread_sharing = false
+favorites = false
+
+[features.slack]
+reaction_on_message_received = false
+
+[features.spontaneous_file_upload]
+    enabled = true
+    accept = ["*/*"]
+    max_files = 20
+    max_size_mb = 500
+
+[features.audio]
+    enabled = false
+    sample_rate = 24000
+
+[features.mcp]
+    enabled = true
+
+# ---------------------------------------------------------------------------
+# MCP servers — all point at /tmp/agent_workspace so agent output never
+# triggers Chainlit's watch-mode reloads.
+# ---------------------------------------------------------------------------
+
+[[features.mcp.servers]]
+    name = "file_tools"
+    type = "stdio"
+    command = "python /workspaces/idk/tools_mcp_server.py"
+    env = { AGENT_WORKSPACE = "/tmp/agent_workspace" }
+
+# Aider — surgical code editing. Enable after: pip install aider-chat
+[[features.mcp.servers]]
+    name = "aider"
+    type = "stdio"
+    command = "python /workspaces/idk/aider_mcp_server.py"
+    env = { GEMINI_API_KEY = "your-key-here" }
+
+# E2B terminal — sandboxed shell. Enable after: pip install e2b-code-interpreter
+[[features.mcp.servers]]
+    name = "terminal"
+    type = "stdio"
+    command = "python /workspaces/idk/terminal_mcp_server.py"
+    env = { E2B_API_KEY = "e2b_your-key-here" }
+
+[features.mcp.user_servers]
+    enabled = true
+    allowed_urls = []
+
+[UI]
+name = "GENGIS Agent"
+language = "en-US"
+confirm_new_chat = true
+cot = "full"
+alert_style = "classic"
+logo_file_url = ""
+default_avatar_file_url = ""
+
+[meta]
+generated_by = "2.12.0"

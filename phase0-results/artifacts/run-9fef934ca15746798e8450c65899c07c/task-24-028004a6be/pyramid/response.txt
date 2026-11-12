@@ -1,0 +1,8 @@
+Sequence of operations for puzzle 1:
+
+1. **Start:** 48 queued jobs.
+2. **Complete one third:** 48 × 1/3 = 16 jobs completed; 48 − 16 = 32 jobs remaining.
+3. **Receive 7 more:** 32 + 7 = 39 jobs.
+4. **Complete 9:** 39 − 9 = 30 jobs remaining.
+
+**Final remaining job count: 30**

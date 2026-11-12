@@ -1,0 +1,11 @@
+{
+  "task_id": "pipeline-03-date-totals",
+  "shape": "data_pipeline",
+  "baseline": "single_t2",
+  "model_id": "nvidia_nim/nvidia/nemotron-3.5-lightning-30b-a3b",
+  "checks_passed": false,
+  "quality_score": 0.0,
+  "tokens": 1952,
+  "api_calls": 3,
+  "duration_seconds": 19.173202480000327
+}

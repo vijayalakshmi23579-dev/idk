@@ -1,0 +1,7 @@
+The `events.json` file was read and the required `out/purchase_summary.json` was created with the following values:
+
+- **purchase_count**: 3  
+- **amount_total**: 90  
+- **unique_buyers**: 3  
+
+File written to `/tmp/phase0-case-cvoqtmei/out/purchase_summary.json`.

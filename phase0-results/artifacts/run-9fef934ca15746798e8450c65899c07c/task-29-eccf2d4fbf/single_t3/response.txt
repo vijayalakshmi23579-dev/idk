@@ -1,0 +1,9 @@
+The answer to puzzle 6:
+
+**Calculation:**
+- Initial table: 9 rows × 14 columns = 126 cells
+- Remove 2 complete columns: 9 × 2 = 18 cells removed
+- Cells remaining after column removal: 126 − 18 = 108 cells (equivalently 9 rows × 12 columns)
+- Reserve 11 cells: 108 − 11 = 97
+
+**97 unreserved cells remain.**

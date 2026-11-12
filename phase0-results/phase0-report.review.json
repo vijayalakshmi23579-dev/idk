@@ -1,0 +1,113 @@
+{
+  "schema_version": "1.0",
+  "reviews": [
+    {
+      "task_id": "research-01-provider-boundary",
+      "baseline": "single_t2",
+      "model_id": "nvidia_nim/nvidia/nemotron-3.5-lightning-30b-a3b",
+      "response_path": "/workspaces/idk/phase0-results/artifacts/run-9fef934ca15746798e8450c65899c07c/task-01-05653f48bc/single_t2/response.txt",
+      "artifact_dir": "/workspaces/idk/phase0-results/artifacts/run-9fef934ca15746798e8450c65899c07c/task-01-05653f48bc/single_t2",
+      "human_quality_score": 0.75,
+      "human_review_notes": null
+    },
+    {
+      "task_id": "research-01-provider-boundary",
+      "baseline": "single_t3",
+      "model_id": "nvidia_nim/nvidia/nemotron-3.5-super-vl-120b-a12b",
+      "response_path": "/workspaces/idk/phase0-results/artifacts/run-9fef934ca15746798e8450c65899c07c/task-01-05653f48bc/single_t3/response.txt",
+      "artifact_dir": "/workspaces/idk/phase0-results/artifacts/run-9fef934ca15746798e8450c65899c07c/task-01-05653f48bc/single_t3",
+      "human_quality_score": 0.75,
+      "human_review_notes": "the latency is higher indeed quality  scores 1"
+    },
+    {
+      "task_id": "research-01-provider-boundary",
+      "baseline": "pyramid",
+      "model_id": "nvidia_nim/nvidia/nemotron-3.5-super-vl-120b-a12b",
+      "response_path": "/workspaces/idk/phase0-results/artifacts/run-9fef934ca15746798e8450c65899c07c/task-01-05653f48bc/pyramid/response.txt",
+      "artifact_dir": "/workspaces/idk/phase0-results/artifacts/run-9fef934ca15746798e8450c65899c07c/task-01-05653f48bc/pyramid",
+      "human_quality_score": 1.0,
+      "human_review_notes": null
+    },
+    {
+      "task_id": "code-01-name-utilities",
+      "baseline": "single_t2",
+      "model_id": "nvidia_nim/nvidia/nemotron-3.5-lightning-30b-a3b",
+      "response_path": "/workspaces/idk/phase0-results/artifacts/run-9fef934ca15746798e8450c65899c07c/task-09-f3a4c6d0e9/single_t2/response.txt",
+      "artifact_dir": "/workspaces/idk/phase0-results/artifacts/run-9fef934ca15746798e8450c65899c07c/task-09-f3a4c6d0e9/single_t2",
+      "human_quality_score": 0.95,
+      "human_review_notes": null
+    },
+    {
+      "task_id": "code-01-name-utilities",
+      "baseline": "single_t3",
+      "model_id": "nvidia_nim/nvidia/nemotron-3.5-super-vl-120b-a12b",
+      "response_path": "/workspaces/idk/phase0-results/artifacts/run-9fef934ca15746798e8450c65899c07c/task-09-f3a4c6d0e9/single_t3/response.txt",
+      "artifact_dir": "/workspaces/idk/phase0-results/artifacts/run-9fef934ca15746798e8450c65899c07c/task-09-f3a4c6d0e9/single_t3",
+      "human_quality_score": 0.89,
+      "human_review_notes": null
+    },
+    {
+      "task_id": "code-01-name-utilities",
+      "baseline": "pyramid",
+      "model_id": "nvidia_nim/nvidia/nemotron-3.5-super-vl-120b-a12b",
+      "response_path": "/workspaces/idk/phase0-results/artifacts/run-9fef934ca15746798e8450c65899c07c/task-09-f3a4c6d0e9/pyramid/response.txt",
+      "artifact_dir": "/workspaces/idk/phase0-results/artifacts/run-9fef934ca15746798e8450c65899c07c/task-09-f3a4c6d0e9/pyramid",
+      "human_quality_score": 1.0,
+      "human_review_notes": null
+    },
+    {
+      "task_id": "pipeline-01-region-totals",
+      "baseline": "single_t2",
+      "model_id": "nvidia_nim/nvidia/nemotron-3.5-lightning-30b-a3b",
+      "response_path": "/workspaces/idk/phase0-results/artifacts/run-9fef934ca15746798e8450c65899c07c/task-17-e5cac7efa0/single_t2/response.txt",
+      "artifact_dir": "/workspaces/idk/phase0-results/artifacts/run-9fef934ca15746798e8450c65899c07c/task-17-e5cac7efa0/single_t2",
+      "human_quality_score": 0.7,
+      "human_review_notes": "latency"
+    },
+    {
+      "task_id": "pipeline-01-region-totals",
+      "baseline": "single_t3",
+      "model_id": "nvidia_nim/nvidia/nemotron-3.5-super-vl-120b-a12b",
+      "response_path": "/workspaces/idk/phase0-results/artifacts/run-9fef934ca15746798e8450c65899c07c/task-17-e5cac7efa0/single_t3/response.txt",
+      "artifact_dir": "/workspaces/idk/phase0-results/artifacts/run-9fef934ca15746798e8450c65899c07c/task-17-e5cac7efa0/single_t3",
+      "human_quality_score": 1.0,
+      "human_review_notes": null
+    },
+    {
+      "task_id": "pipeline-01-region-totals",
+      "baseline": "pyramid",
+      "model_id": "nvidia_nim/nvidia/nemotron-3.5-super-vl-120b-a12b",
+      "response_path": "/workspaces/idk/phase0-results/artifacts/run-9fef934ca15746798e8450c65899c07c/task-17-e5cac7efa0/pyramid/response.txt",
+      "artifact_dir": "/workspaces/idk/phase0-results/artifacts/run-9fef934ca15746798e8450c65899c07c/task-17-e5cac7efa0/pyramid",
+      "human_quality_score": 0.98,
+      "human_review_notes": null
+    },
+    {
+      "task_id": "reason-01-queue-arithmetic",
+      "baseline": "single_t2",
+      "model_id": "nvidia_nim/nvidia/nemotron-3.5-lightning-30b-a3b",
+      "response_path": "/workspaces/idk/phase0-results/artifacts/run-9fef934ca15746798e8450c65899c07c/task-24-028004a6be/single_t2/response.txt",
+      "artifact_dir": "/workspaces/idk/phase0-results/artifacts/run-9fef934ca15746798e8450c65899c07c/task-24-028004a6be/single_t2",
+      "human_quality_score": 0.95,
+      "human_review_notes": null
+    },
+    {
+      "task_id": "reason-01-queue-arithmetic",
+      "baseline": "single_t3",
+      "model_id": "nvidia_nim/nvidia/nemotron-3.5-super-vl-120b-a12b",
+      "response_path": "/workspaces/idk/phase0-results/artifacts/run-9fef934ca15746798e8450c65899c07c/task-24-028004a6be/single_t3/response.txt",
+      "artifact_dir": "/workspaces/idk/phase0-results/artifacts/run-9fef934ca15746798e8450c65899c07c/task-24-028004a6be/single_t3",
+      "human_quality_score": 1.0,
+      "human_review_notes": null
+    },
+    {
+      "task_id": "reason-01-queue-arithmetic",
+      "baseline": "pyramid",
+      "model_id": "nvidia_nim/nvidia/nemotron-3.5-super-vl-120b-a12b",
+      "response_path": "/workspaces/idk/phase0-results/artifacts/run-9fef934ca15746798e8450c65899c07c/task-24-028004a6be/pyramid/response.txt",
+      "artifact_dir": "/workspaces/idk/phase0-results/artifacts/run-9fef934ca15746798e8450c65899c07c/task-24-028004a6be/pyramid",
+      "human_quality_score": 1.0,
+      "human_review_notes": null
+    }
+  ]
+}

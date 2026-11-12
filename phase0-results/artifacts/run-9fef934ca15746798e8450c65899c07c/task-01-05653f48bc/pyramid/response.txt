@@ -1,0 +1,16 @@
+## Evidence (architecture.md)
+
+The relevant statements:
+
+- Line 5: *"The runtime query loop owns conversation state, context shaping, compaction, and tool continuation."*
+- Line 6: *"The API adapter converts internal messages and tools for LiteLLM and normalizes provider streaming events."*
+- Line 11: *"Provider calls have bounded concurrency and retry/fallback behavior. RPM and TPM quotas are not enforced."*
+
+## Provider-agnostic boundary
+
+The boundary sits between the **runtime query loop** (the provider-agnostic core) and the **provider-facing integration**. Everything owned by the query loop — conversation state, context shaping, compaction, and tool continuation — is provider-agnostic. The boundary itself is the **API adapter**, which converts internal messages and tools for the provider library and normalizes provider streaming events back into the runtime's internal form. Provider calls (including bounded concurrency and retry/fallback) cross this boundary; provider-specific concerns such as streaming event shapes are contained behind it.
+
+## Adapter and library
+
+- **Adapter:** the API adapter (line 6)
+- **Library:** LiteLLM (line 6)

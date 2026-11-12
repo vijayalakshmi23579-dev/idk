@@ -1,0 +1,11 @@
+I'll start by inspecting the available fixture files to ground the answer in the actual workspace content.
+
+
+**Persisted conversation and memory features (per `architecture.md`, line 13):**
+
+- **SQLite** is the persistence store for session messages: conversation state is kept **append-only** in SQLite, meaning messages are never mutated or deleted in place, only added.
+- **FTS5** provides full-text search over those persisted session messages, enabling searchable conversation history.
+- **Summary DAGs** (directed acyclic graphs of summaries) handle compaction of the conversation state.
+- **Summaries retain source access** because source messages are **recoverable**: the summarized content remains linked back to the original source messages, so a summary can be traced to (and the original messages recovered from) the underlying persisted records rather than being a lossy, disconnected abstraction.
+
+In short: conversations live append-only in SQLite, are searchable via FTS5, are compacted via summary DAGs, and those summaries keep a recoverable link to their source messages.

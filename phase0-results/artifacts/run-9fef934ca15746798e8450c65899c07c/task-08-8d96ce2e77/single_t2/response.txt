@@ -1,0 +1,13 @@
+**Provider‑visible information in tool schemas**
+
+- **Descriptions** – the short free‑text summary that explains what the tool does.  
+- **Parameters** – the JSON‑schema definition of the tool’s input arguments (names, types, defaults, required/optional flags, etc.).
+
+These are the only two pieces of a tool schema that the provider (e.g., LiteLLM, OpenAI, etc.) can see and use when deciding how to call the tool.
+
+**Two deferred/prompt behaviors that must *not* be claimed as provider‑visible**
+
+1. **Tool prompt guidance** – any instructions, examples, or formatting hints that are injected into the model’s prompt *after* the tool schema is delivered.  
+2. **Deferred‑schema loading** – the practice of loading or updating a tool’s parameter schema lazily, during a conversation, rather than at the initial schema‑delivery step.
+
+Both of these are internal to the system’s runtime and are explicitly called out in the architecture notes (“Tool prompt guidance and deferred‑schema loading are not provider‑visible behaviors”). Claims that they are visible to the provider would be incorrect.

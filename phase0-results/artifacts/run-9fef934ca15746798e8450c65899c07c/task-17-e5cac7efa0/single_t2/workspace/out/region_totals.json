@@ -1,0 +1,5 @@
+{
+  "North": {"units": 5, "revenue": 65},
+  "South": {"units": 5, "revenue": 55},
+  "East": {"units": 3, "revenue": 39}
+}

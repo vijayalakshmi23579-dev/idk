@@ -1,0 +1,7 @@
+[
+  {"event":"signup","user":"alice","source":"social"},
+  {"event":"purchase","user":"alice","amount":30},
+  {"event":"purchase","user":"bob","amount":20},
+  {"event":"signup","user":"cara","source":"search"},
+  {"event":"purchase","user":"cara","amount":40}
+]

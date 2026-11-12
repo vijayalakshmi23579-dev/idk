@@ -1,0 +1,21 @@
+**Solution to Puzzle 4**
+
+A library has 120 books. One quarter are fiction. Of the non-fiction books, one third are checked out. How many non-fiction books are available?
+
+**Step-by-step fraction computation:**
+
+1. **Fiction books:** One quarter of the total are fiction.
+   $$1/4 \times 120 = 30 \text{ fiction books}$$
+
+2. **Non-fiction books:** The remaining books are non-fiction.
+   $$120 - 30 = 90 \text{ non-fiction books}$$
+   (Equivalently: $3/4 \times 120 = 90$)
+
+3. **Checked-out non-fiction books:** One third of the non-fiction books are checked out.
+   $$1/3 \times 90 = 30 \text{ non-fiction books checked out}$$
+
+4. **Available non-fiction books:** Subtract the checked-out books from the total non-fiction.
+   $$90 - 30 = 60 \text{ non-fiction books available}$$
+   (Equivalently: if $1/3$ are checked out, $2/3$ are available, so $2/3 \times 90 = 60$)
+
+**Answer: 60 non-fiction books are available.**

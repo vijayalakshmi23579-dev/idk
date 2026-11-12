@@ -1,0 +1,13 @@
+# Task Worker Isolation and DAG Execution
+
+## Isolation
+Task workers have **isolated query state** — each worker maintains its own conversation/context state independently, rather than sharing a mutable runtime state with other workers.
+
+## DAG Execution and Node Limit
+A Task DAG can have at most **eight nodes**. When the estimated steps are at most eight (or no estimate is supplied, or work is sequential), the deterministic split gate defaults to a single agent. Wide (multi-agent) execution requires at least three independent branches and either read-heavy work or disjoint writes.
+
+## Read/Write Scheduling Distinction
+- **Ready read-only workers**: run **concurrently** (parallel execution).
+- **Writers**: are **serialized** (executed one at a time), ensuring mutual exclusion on state-changing operations.
+
+This design allows parallelism for reads while guaranteeing consistency for writes.

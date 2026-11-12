@@ -1,0 +1,18 @@
+{
+  "task_id": "research-03-split-gate",
+  "shape": "breadth_research",
+  "baseline": "pyramid",
+  "model_id": "nvidia_nim/nvidia/nemotron-3.5-super-vl-120b-a12b",
+  "checks_passed": false,
+  "quality_score": 0.0,
+  "tokens": 3261,
+  "api_calls": 1,
+  "task_invocations": 0,
+  "child_api_calls": 0,
+  "child_provider_attempts": 0,
+  "child_model_ids": [],
+  "task_worker_count": 0,
+  "task_worker_successes": 0,
+  "task_worker_failures": 0,
+  "duration_seconds": 4.356303708999803
+}

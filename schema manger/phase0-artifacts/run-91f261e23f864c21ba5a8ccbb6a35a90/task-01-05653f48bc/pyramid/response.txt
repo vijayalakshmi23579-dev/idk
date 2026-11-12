@@ -1,0 +1,11 @@
+**Provider-agnostic boundary**
+
+The boundary lies between the runtime query loop and the API adapter:
+
+- **Runtime query loop (provider-agnostic side):** owns conversation state, context shaping, compaction, and tool continuation. It validates tool inputs, checks permissions, runs safety checks, and maps tool results back to the model.
+- **API adapter (provider-facing side):** converts internal messages and tools for LiteLLM and normalizes provider streaming events.
+
+Provider calls themselves have bounded concurrency and retry/fallback behavior, with RPM and TPM quotas not enforced.
+
+**Adapter:** API adapter  
+**Library:** LiteLLM

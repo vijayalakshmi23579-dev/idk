@@ -1,0 +1,11 @@
+**Puzzle 2 Solution**
+
+Step-by-step:
+
+1. **Total items in first batch:** 5 boxes × 12 items each = **60 items**
+2. **Items rejected:** 4 items rejected from every box × 5 boxes = **20 rejected items**
+3. **Accepted items before transfer:** 60 − 20 = **40 accepted items**
+4. **Items moved to second batch:** **7 accepted items** moved out
+5. **Accepted items remaining in first batch:** 40 − 7 = **33**
+
+**Answer: 33 accepted items remain in the first batch.**

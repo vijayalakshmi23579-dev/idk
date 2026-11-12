@@ -1,0 +1,11 @@
+{
+  "task_id": "reason-06-table-capacity",
+  "shape": "sequential_reasoning",
+  "baseline": "pyramid",
+  "model_id": "nvidia_nim/nvidia/nemotron-3.5-super-vl-120b-a12b",
+  "checks_passed": true,
+  "quality_score": 1.0,
+  "tokens": 5818,
+  "api_calls": 2,
+  "duration_seconds": 6.625761011000577
+}

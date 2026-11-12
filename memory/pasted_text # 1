@@ -1,0 +1,341 @@
+# The Research Answer: Your Pyramid Is Correct, But Two of Your Instincts Need Correction
+
+I read the primary sources. Your architecture — intelligent model at the top, cheap models executing, a divider layer that orthogonalizes tasks — is **exactly what the 2026 literature converges on**. But two of your assumptions are backwards, and knowing which two will save you from building the wrong thing.
+
+---
+
+## 1. The Economic Layer: Routing Is Not Optional, It Is 72% of Your Budget
+
+Your instinct that "using a high-intelligence model for simple tasks is waste" is not just correct — it is **measurably the single largest cost lever available to you**.
+
+| System | Mechanism | Measured result |
+| :--- | :--- | :--- |
+| **RouteLLM** (Berkeley, ICLR 2025) | Learned router trained on preference data | **85% cost reduction** on MT-Bench at **95% of GPT-4 quality**, sending only **14% of queries** to the strong model |
+| **FrugalGPT** (Stanford, 2023) | Cascade: cheap → expensive until confidence threshold | **Up to 98% cost reduction** at GPT-4 accuracy |
+| **AgentRouter** (2026) | Per-step routing across 4 model tiers with trajectory-level signal | **72% cost reduction** at **97.3% of frontier quality** (<3% degradation) |
+
+The critical finding that separates AgentRouter from the earlier two:
+
+> *"RouteLLM and FrugalGPT (applied per-step) achieve only **31% and 44%** cost reduction respectively, because their **single-turn training signal misses trajectory-level quality dependencies**."*
+
+**What this means for your pyramid:** you cannot route on the *prompt* alone. You must route on **where in the trajectory you are**. Planning steps need the strong model. The 8th file read in a batch does not. The router must be **state-aware**, not just query-aware.
+
+**Your layer-1 model should be the router.** It knows the plan, knows what step is next, and can decide "this subtask is mechanical → Haiku / Gemma" vs "this subtask requires judgment → Sonnet / Opus". That decision is itself a model call — but a cheap one (~50 tokens of output) that saves 70% of the downstream cost.
+
+---
+
+## 2. The Topology Layer: The 17.2× Number That Validates Your Entire Design
+
+This is the most important finding in the whole answer, and it directly confirms your instinct about why the intelligent model must sit at the top.
+
+A large-scale study of multi-agent scaling laws measured error propagation across topologies:
+
+> *"Independent agents operating in parallel amplified errors **17.2 times**, while **centralized hierarchical oversight contained amplification to 4.4 times** but could not eliminate it."*
+
+And the corollary that makes it actionable:
+
+> *"Once a single agent gets past roughly **45% accuracy** on a task, adding more agents mostly adds two things: **coordination tax** and a lovely **17.2× error amplification effect**. In other words, if your base agent is mid, your swarm will be extremely mid."*
+
+**Decomposed into what it means for your architecture:**
+
+| Topology | Error amplification | What it looks like |
+| :--- | :--- | :--- |
+| Single agent | 1.0× | Baseline |
+| **Independent parallel agents** (no coordinator) | **17.2×** | A swarm where each worker does its own thing |
+| **Centralized hierarchical** (your design) | **4.4×** | Planner at top, workers below, coordinator reconciles |
+| Sequential reasoning (single-agent baseline) | — | Multi-agent variants degraded sequential reasoning by **39–70%** |
+
+**Two conclusions you must build around:**
+
+1. **Your pyramid is the 4.4× topology, not the 17.2× one.** The intelligent model at the top is not a luxury — it is the **error containment mechanism**. Remove it and error amplification quadruples.
+2. **4.4× is not zero.** Centralized coordination *contains* but does not *eliminate* amplification. This means you must add **verification gates** at the reconcile step — the coordinator cannot blindly concatenate worker outputs.
+
+The financial consequence is real: *"Poorly structured multi-agent systems can amplify errors up to 17 times and cost over **$500,000 a year** in extra tokens."* For a personal project that's absurd, but the mechanism is the same at any scale — a swarm without a coordinator burns tokens amplifying its own mistakes.
+
+---
+
+## 3. Your Task-Divider Layer Already Has a Name and an Exact Algorithm
+
+This is the part of your proposal I want to affirm most strongly. You said:
+
+> *"The 2nd layer subagents need communication between themselves and they're not much intelligent to tackle the problem on their own by maintaining consistency between themselves, which causes ripple effect... so the context from the subagent — it divides into, arranges, assigns tasks by knowing the context to the later subagents."*
+
+That is the **Orthogonal Partitioning** pattern, and it has four named invariants:
+
+| Invariant | What it forbids | Why |
+| :--- | :--- | :--- |
+| **Disjoint Workspaces** | Two workers owning the same file / topic / data slice | *"When subagents share mutable state or write to the same files, coordination overhead and collision resolution **eliminate the benefits of concurrency**"* |
+| **Single Writer Principle** | Two workers authorized to write to the same resource | Enforced at the registry level, not by convention |
+| **Staged Output** | Workers writing directly to the shared artifact | Workers write to `staging/task_*.md` or discrete modules; the coordinator reconciles in a **Reduce phase** |
+| **Context Cleanliness** | Passing the parent's full history to a worker | *"Disposable workers run with a **clean context window per task**, preventing prompt dilution, tool-log pollution, and cognitive drift"* |
+
+**The structural flow is exactly your pyramid:**
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  ROOT COORDINATOR (your layer 1 — intelligent model)        │
+│  - Analyzes objective & calculates DOP budget (degree of    │
+│    parallelism)                                             │
+│  - Defines strict DISJOINT boundaries                       │
+│  - Dispatches workers & yields main session immediately     │
+└──────────────────────────┬──────────────────────────────────┘
+                           │
+        ┌──────────────────┼──────────────────┐
+        ▼                  ▼                  ▼
+ ┌─────────────┐    ┌─────────────┐    ┌─────────────┐
+ │ Worker 1    │    │ Worker 2    │    │ Worker 3    │
+ │ Scope: A    │    │ Scope: B    │    │ Scope: C    │
+ │ Output: A'  │    │ Output: B'  │    │ Output: C'  │
+ └──────┬──────┘    └──────┬──────┘    └──────┬──────┘
+        └──────────────────┼──────────────────┘
+                           ▼
+┌─────────────────────────────────────────────────────────────┐
+│  REDUCE PIPELINE (your reconcile step)                      │
+│  - Gathers disjoint outputs                                 │
+│  - VERIFIES integrity & reconciles dependencies             │
+│  - Delivers synthesized result                              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+
+**The domain matrix for "what is orthogonal" is already published** — the partitioning dimension differs per task type:
+
+| Domain | Partition by | Worker produces | Coordinator does |
+| :--- | :--- | :--- | :--- |
+| **Research** | Topic facet / source domain | Structured memo with cited facts | Synthesizes, resolves conflicts, merges |
+| **Code implementation** | Subsystem / package / module | Package files + local tests | Integration agent wires components, purges stubs, runs full suite |
+| **Code review** | Review lens (security / performance / style / a11y) | Issue log with severity + line refs | Merges, deduplicates, prioritizes |
+| **Long-form writing** | Chapter / section | Self-contained draft file | Harmonizes voice, connects transitions |
+
+**Your correction to yourself is also correct:** you proposed merging the divider into the parent subagent rather than making it a separate service. The research supports this — **AgentSpawn** calls this "metacognitive spawning": *"the parent agent evaluates whether it possesses sufficient expertise for the current subtask... This self-assessment through complexity metrics enables architectural adaptation"*. The parent **is** the divider, because it is the only thing that has the context to know what "orthogonal" means for this specific task.
+
+---
+
+## 4. Wide vs Recursive: The Research Answer Is "Recursion Is Primary, Fan-Out Is a Node Mode"
+
+This is where one of your assumptions needs adjustment. You framed it as **wide (speculative, parallel) vs recursive (hybrid, exploratory)**, with wide preferred when the steps are deterministic.
+
+The research says flat parallelism **solves coverage but not depth**:
+
+> *"A single ReAct-style agent is constrained by one long trajectory and limited context, making it difficult to handle depth and coverage simultaneously... The obvious fix is parallelism: split the query, dispatch N agents, collect N flat results. **That solves coverage. It doesn't solve depth**, because flat parallel workers can't hand a hard sub-question off to someone better positioned to chase it three levels deeper."*
+
+**WebSwarm's fix is the architecture you should build**:
+
+| Property | Flat fan-out | Recursive delegation (WebSwarm) |
+| :--- | :--- | :--- |
+| Context per worker | Shared global prompt | **Local objective per node** — clean window |
+| Search strategy | One global setting | **Mode is a property of the node** — depth-first for a thread paying off, breadth-first for scanning |
+| Data flow | Results collected flat | **Evidence flows upward, decisions flow downward** — parent can expand, revise, or aggregate |
+| Depth | Cannot go deeper | **Node can spawn a child-of-child** when evidence warrants |
+
+The critical mechanism is the feedback loop:
+
+> *"A parent can look at what a child found and decide the child's finding warrants a deeper follow-up node, or that it's a dead end to prune. That **upward-evidence-triggers-downward-expansion** loop is the actual mechanism that breaks the tradeoff."*
+
+**So your architecture should be:**
+
+- **Recursion is the default topology.** Every node is a `query()` loop that can spawn children.
+- **Fan-out is a node-level decision**, not a global mode. A node that recognizes "these 5 sub-questions are independent and deterministic" fans out 5 children in parallel. A node that recognizes "I need to go deeper on this one thread" spawns **one** child and recurses.
+- **Speculative parallelism is a scheduling overlay on top of recursion**, not a replacement for it.
+
+**Speculative execution has one hard contract you must respect:**
+
+> *"Speculation must be **interference-free along two dimensions**. First, on the resource side, speculative tool execution from many concurrent sessions must not delay authoritative tool invocations. Second, on the correctness side, speculative execution **must not expose side effects or speculative results to the agent before the LLM confirms the invocation**."*
+
+And the committed program remains the sole source of truth: *"a speculative launch predicts work; it does not commit the call or make partial model output authoritative."*
+
+**Translation:** speculative fan-out is safe **only** if the branch is read-only. A speculative `Read` or `Grep` is fine — the worst case is wasted tokens. A speculative `Edit` or `Bash` that mutates state is **not safe** because if the model's later reasoning diverges, you have already written to disk based on a guess.
+
+---
+
+## 5. Adaptive Spawning: The Exact Thresholds Are Published
+
+This is the part where your instinct about latency ("api calls only") is correct, and the numbers are specific.
+
+| Decision | Research threshold | Source |
+| :--- | :--- | :--- |
+| **Spawn at all?** | Only when the subtask exceeds **~15 minutes of single-agent time** | AgentSpawn cost-benefit analysis |
+| **Spawn cost** | **80ms** fixed overhead per spawn (20 tokens) | M8 sub-agent delegation spike |
+| **Full serialization cost** | **2–5 seconds** per spawn (serialization + memory slicing + child init) | AgentSpawn |
+| **When spawn kills ROI** | Simple tasks — *"Spawn overhead (80ms, 20 tokens) kills ROI on simple tasks"* | M8 |
+| **Accuracy lift when it works** | **+20%** on complex reasoning | M8 |
+| **Latency budget required** | ≥500ms to absorb the 35–45% overhead | M8 |
+| **Runtime fan-out N** | **3–7** sub-questions, chosen at runtime | L4a parallel fan-out |
+| **Spawn depth limit** | **3 levels** (parent → child → grandchild); deeper risks coordination overhead | AgentSpawn |
+| **Per-child timeout** | **30 minutes** max | AgentSpawn |
+| **Semantic merge success** | **73%** — highly coupled modifications remain challenging | AgentSpawn |
+
+**The spawning decision tree this gives you:**
+
+```
+Is the subtask > ~15 min of single-agent work?
+  ├── NO  → Do it inline. Spawn overhead (80ms–5s) exceeds the benefit.
+  └── YES → Is the task shape KNOWN and DETERMINISTIC?
+              ├── YES → Wide fan-out: N = 3–7 parallel workers
+              │         (read-only branches only if speculative)
+              └── NO  → Recursive: spawn 1 child to go deeper,
+                         evaluate the result, decide whether to recurse again
+                         (max depth 3)
+```
+
+And a cost result that matters for a personal budget: AgentSpawn reports **+54% tokens, +92% API calls, +44% time** per task versus a single agent — but **−9% cost per *successful* completion** because the completion rate goes from **45% → 67%**. Multi-agent is *more expensive per attempt* and *cheaper per success* — which is the correct way to evaluate it.
+
+---
+
+## 6. Schema Registry: The Research Answer Is "Shared Registry With Eviction, Not Broadcast"
+
+Your instinct that subagents need a **schema registry** for consistency is correct, and there is a specific mechanism for it.
+
+**RAMPART** (Registry-based Agentic Memory with Priority-Aware Runtime Transformation) describes exactly the control-plane problem you identified:
+
+> *"In the shared-registry model, a coordinating registry can **revoke a subagent's access to a tool by evicting the schema block before the subagent's next compile call, with no round-trip required**."*
+
+This is the key: **the registry is the permission system**. A subagent does not get a "copy" of a tool schema — it gets a **reference into the shared registry**, and the coordinator can revoke that reference mid-run by removing the schema block. That is how you prevent a compromised or drifting subagent from continuing to use a tool the coordinator has decided it should no longer have.
+
+**The cross-protocol problem is also named:**
+
+> *"Descriptors in MCP (tools), A2A (roles/behaviors), and ACP (message schemas/policies) use **different primitives and evolve at different speeds**... cross-protocol operation requires a **shared metadata core**."*
+
+**AgentHub** proposes SBOM-style manifests that express *"runtime permissions, preconditions, environment bindings, and protocol roles"*.
+
+**And the subagent registry pattern is already implemented in one harness:**
+
+> *"Subagent registries adopt it so their shell work is torn down with the parent thread on DeleteThread... Because **schemas and execution share this registry**, delegate_task and resume_task are **neither advertised to the model nor dispatchable** by that runtime."*
+
+This is the recursion guard: **the subagent's tool registry does not contain `AgentTool`**. The model cannot spawn a child because the tool is not in its schema. That is how you enforce the depth limit — **structurally, not by policy**.
+
+**Your schema registry therefore needs four things:**
+
+| Component | Purpose |
+| :--- | :--- |
+| **Shared tool registry** | One source of truth for all tool schemas, referenced (not copied) by every agent |
+| **Per-subagent filtered registry** | The coordinator passes a **subset** of the parent registry; subagents cannot see tools they are not authorized for |
+| **Schema eviction** | Coordinator can revoke a tool mid-run by removing it from the subagent's registry |
+| **Recursion sentinel** | `AgentTool` is **absent** from subagent registries beyond depth N |
+
+---
+
+## 7. Communication: Pub/Sub for Events, Blackboard for State, Never Both for the Same Data
+
+You asked whether to use "redis pubsub events between the subagents like microservices." The research answer is **nuanced** — there are two distinct patterns, and conflating them is the failure mode.
+
+### Pattern A: Blackboard (shared state, read/write by role)
+
+> *"All agents run in one process and **synchronize through one shared blackboard (single source of truth)**... stronger long-horizon behavior on short-context models through **role-isolated working memory**."*
+
+> *"Blackboard-Core provides a centralized state architecture... Instead of agents messaging each other directly, **all agents read from and write to a shared Blackboard (state), while a Supervisor LLM orchestrates which agent runs next**... Branch-Merge — Fork states, work in isolation, merge results."*
+
+And the architectural framing that matches your proposal exactly:
+
+> *"The essence of multi-agent collaboration is not necessarily agents chatting with each other, but **division of labor over reading and writing the same state**."*
+
+### Pattern B: Message Bus (events, task queues, notifications)
+
+> *"Fabric A2A... Async Messaging — **Redis Streams for persistent task queues**. Real-time Events — **Pub/Sub for broadcasts and notifications**. Agent Registry — PostgreSQL-backed discovery service. ACL Security — fine-grained permissions per agent."*
+
+And the protocol-level standard for delegation:
+
+> *"A2A uses HTTP, SSE, and JSON-RPC 2.0 — with **Agent Cards for capability discovery** and **Tasks for work delegation**... Task lifecycle: submitted, working, input-required, completed, failed."*
+
+### The reconciliation — when to use which
+
+The research gives a clear decision rule:
+
+| Use RPC (A2A/MCP) when... | Use pub/sub when... |
+| :--- | :--- |
+| Low-latency point operation | **Broadcast queries** |
+| Immediate feedback required | **Coordinated multi-agent actions** |
+| **Well-defined error contracts** | **Efficient collection of results in real time** |
+
+**For your architecture:**
+
+| Data | Pattern | Why |
+| :--- | :--- | :--- |
+| **The plan / todo list** | **Blackboard** (read by all, written only by coordinator) | Single source of truth; workers need to read it, never write it |
+| **Task dispatch** | **A2A RPC** (`fabric.call`) | Point-to-point, needs error contract, needs result |
+| **Task completion events** | **Pub/Sub** | Broadcast to coordinator and any observers |
+| **Tool registry** | **Shared registry with eviction** (RAMPART) | Not a message — a reference with revocable access |
+| **Worker staged output** | **Isolated files, read by coordinator at reduce** | Never through the bus — files are the buffer |
+
+**The anti-pattern to avoid:** workers **writing to the plan**. If two workers can write to the shared todo list, you have shared mutable state and the 17.2× amplification returns. **Only the coordinator writes the plan.**
+
+---
+
+## 8. The Corrected Architecture
+
+Combining everything, here is what your pyramid should look like:
+
+```
+╔══════════════════════════════════════════════════════════════════════════════╗
+║  LAYER 0 — ROUTER (per-step, trajectory-aware)                              ║
+║  Decides which model tier handles THIS step. Not a separate agent —        ║
+║  a function called before every dispatch. 72% cost reduction is here.      ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+                                    │
+╔══════════════════════════════════════════════════════════════════════════════╗
+║  LAYER 1 — ORCHESTRATOR (intelligent model: Opus / Sonnet)                  ║
+║  ┌────────────────────────────────────────────────────────────────────────┐ ║
+║  │  • Owns the PLAN (todo list, objective) — SOLE WRITER                  │ ║
+║  │  • Owns the SCHEMA REGISTRY — can evict tools from any child          │ ║
+║  │  • Owns the TASK DIVIDER — decides orthogonal boundaries              │ ║
+║  │  • Decides spawn count (0 / 1 recursive / 3–7 wide)                   │ ║
+║  │  • Decides spawn mode (wide for deterministic, recursive for unknown) │ ║
+║  │  • Reads the BLACKBOARD; workers only read it                         │ ║
+║  │  • Runs the VERIFICATION GATE on every returned result                │ ║
+║  └────────────────────────────────────────────────────────────────────────┘ ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+                                    │
+                    ┌───────────────┼───────────────┐
+                    │               │               │
+                    ▼               ▼               ▼
+╔══════════════════════════════════════════════════════════════════════════════╗
+║  LAYER 2 — WORKERS (cheap models: Haiku / Gemma / Llama / DeepSeek)        ║
+║  ┌─────────────────────┐ ┌─────────────────────┐ ┌─────────────────────┐   ║
+║  │  Worker A           │ │  Worker B           │ │  Worker C           │   ║
+║  │  Scope: disjoint    │ │  Scope: disjoint    │ │  Scope: disjoint    │   ║
+║  │  Context: CLEAN     │ │  Context: CLEAN     │ │  Context: CLEAN     │   ║
+║  │  (only its prompt)  │ │                     │ │                     │   ║
+║  │  Tools: filtered    │ │  Tools: filtered    │ │  Tools: filtered    │   ║
+║  │  (no AgentTool!)    │ │                     │ │                     │   ║
+║  │  Output: staging/   │ │  Output: staging/   │ │  Output: staging/   │   ║
+║  └──────────┬──────────┘ └──────────┬──────────┘ └──────────┬──────────┘   ║
+╚═════════════╪═══════════════════════╪═══════════════════════╪══════════════╝
+              │                       │                       │
+              └───────────────────────┼───────────────────────┘
+                                      ▼
+╔══════════════════════════════════════════════════════════════════════════════╗
+║  LAYER 3 — REDUCE + VERIFY (back to intelligent model)                      ║
+║  • Gather disjoint outputs       • Verify integrity                         ║
+║  • Reconcile dependencies        • Reject or re-spawn on failure            ║
+║  • Resume: if a child's finding warrants deeper work, spawn                ║
+║    a child-of-child (upward-evidence → downward-expansion)                 ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+```
+
+**The two rules that make this work:**
+
+1. **Workers never touch the plan, the registry, or the blackboard's write side.** They read their instructions and write to their staging file. Everything else is the orchestrator's.
+2. **The orchestrator verifies before it aggregates.** The 4.4× residual error amplification lives at the reduce step — that is where the verification gate is required.
+
+---
+
+## 9. What to Build, In Order
+
+Given your current state (agent working end-to-end with Read/Edit/Bash, store.py planned), the multi-agent layer is the **next major milestone** after the context layer. The build order:
+
+| # | File | Lines | Purpose | Evidence base |
+| :--- | :--- | :--- | :--- | :--- |
+| **1** | `router.py` | ~80 | Per-step model tier decision. Classifies the step, maps to a model. | AgentRouter's 72% |
+| **2** | `registry.py` (extend) | ~60 | Per-subagent filtered registry + `AgentTool` sentinel + schema eviction | RAMPART eviction, subagent registry |
+| **3** | `divider.py` | ~120 | Orthogonal partitioner: given a plan + context, produce N disjoint scopes with staging paths. Enforces Single Writer. | Orthogonal partitioning |
+| **4** | `agent_tool.py` | ~200 | The spawn primitive. `spawn_wide(N)` and `spawn_recursive(1)`. Clean context, filtered tools, staging output, depth sentinel. | AgentSpawn metacognitive spawning |
+| **5** | `coordinator.py` | ~180 | The layer-1 loop: plan → divide → dispatch → **verify** → aggregate → maybe re-expand. Enforces depth ≤ 3, timeout ≤ 30 min. | WebSwarm recursion, 4.4× containment |
+| **6** | `bus.py` | ~90 | Minimal blackboard (SQLite, already have `store.py`) + RPC dispatch. Skip Redis for personal use — SQLite + `asyncio.Queue` covers it. | Blackboard pattern |
+
+**Total: ~730 lines** for a working two-layer orchestrator with orthogonal partitioning, adaptive spawning, schema-controlled tool access, and verification at the reduce step.
+
+---
+
+## The One-Line Answer
+
+**Your pyramid is the 4.4× topology that the scaling literature says is the *only* multi-agent structure that doesn't destroy itself — independent agents amplify errors 17.2×, centralized hierarchical coordination contains it to 4.4×, so the intelligent model at the top is not overhead, it is the error containment mechanism** ; **your "task divider" instinct is the published Orthogonal Partitioning pattern with four named invariants — Disjoint Workspaces, Single Writer Principle, Staged Output, Context Cleanliness** ; **your "wide vs recursive" intuition needs one correction: flat fan-out solves coverage but not depth, so recursion must be the default topology and fan-out must be a per-node mode** ; **spawning is only worth it above ~15 minutes of single-agent work, at N = 3–7, with depth capped at 3 and 30-minute child timeouts** ; **the schema registry is the permission system — a coordinator revokes a subagent's tool by evicting its schema block, and the recursion guard is structural because `AgentTool` is absent from subagent registries** ; **and communication splits cleanly: blackboard for shared state that only the coordinator writes, A2A-style RPC for task dispatch, pub/sub only for broadcast events — never let a worker write the plan or the 17.2× amplification comes back.**

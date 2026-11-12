@@ -1,0 +1,204 @@
+import httpx
+
+from typing import Callable, Optional
+
+from e2b.envd.rpc import (
+    format_sandbox_unreachable_exception,
+    format_terminated_exception,
+)
+from e2b.exceptions import (
+    SandboxException,
+    NotFoundException,
+    AuthenticationException,
+    InvalidArgumentException,
+    NotEnoughSpaceException,
+    RateLimitException,
+    SandboxNotRunningException,
+    format_sandbox_unavailable_exception,
+)
+
+
+ENVD_API_FILES_ROUTE = "/files"
+ENVD_API_HEALTH_ROUTE = "/health"
+
+_DEFAULT_API_ERROR_MAP: dict[int, Callable[[str], Exception]] = {
+    400: InvalidArgumentException,
+    401: AuthenticationException,
+    404: NotFoundException,
+    429: lambda message: RateLimitException(
+        f"{message}: The requests are being rate limited."
+    ),
+    502: format_sandbox_unavailable_exception,
+    507: NotEnoughSpaceException,
+}
+
+
+HEALTH_CHECK_TIMEOUT = 5  # seconds
+
+# Raised by the pyqwest httpx adapter when a request fails at the connection
+# level: the connection could not be established (``ConnectError`` /
+# ``ConnectTimeout``, after the connection layer's own retries) or was dropped
+# mid-request (``ReadError`` / ``WriteError`` / ``RemoteProtocolError``, e.g. an
+# HTTP/2 stream reset). Read timeouts are excluded: the request reached the
+# sandbox and exhausted its budget, which is a definitive result.
+ENVD_API_TRANSPORT_ERRORS = (
+    httpx.ConnectError,
+    httpx.ConnectTimeout,
+    httpx.ReadError,
+    httpx.WriteError,
+    httpx.RemoteProtocolError,
+)
+
+
+def check_sandbox_health(envd_api: httpx.Client) -> Optional[bool]:
+    """Probe the sandbox's envd health endpoint.
+
+    :param envd_api: The sandbox's envd HTTP client -- the one built with ``retry_connect=False`` when probing after a failed request, so a sandbox that cannot be reached is not tried all over again.
+
+    :return: ``True`` if the sandbox is running, ``False`` if it is not, ``None`` if it answered but its state could not be determined.
+    :raises httpx.TransportError: When the sandbox could not be reached (no answer within the probe timeout).
+    :raises SandboxUnreachableException: When the proxy reports the sandbox running but envd's port not open -- the exception a request would get.
+    """
+    try:
+        r = envd_api.get(ENVD_API_HEALTH_ROUTE, timeout=HEALTH_CHECK_TIMEOUT)
+    except httpx.TransportError:
+        raise
+    except Exception:
+        return None
+    return _health_status(r)
+
+
+async def acheck_sandbox_health(envd_api: httpx.AsyncClient) -> Optional[bool]:
+    """Async version of :func:`check_sandbox_health`."""
+    try:
+        r = await envd_api.get(ENVD_API_HEALTH_ROUTE, timeout=HEALTH_CHECK_TIMEOUT)
+    except httpx.TransportError:
+        raise
+    except Exception:
+        return None
+    return _health_status(r)
+
+
+def _health_status(r: httpx.Response) -> Optional[bool]:
+    if r.status_code == 502:
+        err = format_sandbox_unavailable_exception(get_message(r))
+        if isinstance(err, SandboxNotRunningException):
+            return False
+        raise err
+    if r.is_success:
+        return True
+    return None
+
+
+def handle_envd_api_transport_exception(
+    e: Exception,
+    sandbox_running: Optional[bool] = None,
+) -> Exception:
+    """Handle transport-level errors from envd API requests.
+
+    :param e: The caught exception, expected to be a transport-level ``httpx`` error.
+    :param sandbox_running: Result of a sandbox health probe (``None`` when unknown), used to disambiguate a request that failed at the connection level.
+    :return: A ``SandboxNotRunningException`` when the request failed at the connection level and the sandbox is confirmed gone, or the original exception unchanged otherwise.
+    """
+    if isinstance(e, ENVD_API_TRANSPORT_ERRORS):
+        return format_terminated_exception(e, sandbox_running)
+
+    return e
+
+
+def handle_envd_api_transport_exception_with_health(
+    e: Exception,
+    envd_api: httpx.Client,
+) -> Exception:
+    """Like :func:`handle_envd_api_transport_exception`, but when the request failed at
+    the connection level (the connection to the sandbox could not be established or was
+    dropped mid-request) it probes the sandbox health to tell apart the sandbox being
+    killed from the sandbox being unreachable or a transient network failure (e.g. a
+    load balancer dropping the connection). When the probe gets no answer either, a
+    ``SandboxUnreachableException`` is returned.
+    """
+    if not isinstance(e, ENVD_API_TRANSPORT_ERRORS):
+        return e
+    try:
+        sandbox_running = check_sandbox_health(envd_api)
+    except Exception as probe_error:
+        return format_sandbox_unreachable_exception(e, probe_error)
+    return handle_envd_api_transport_exception(e, sandbox_running)
+
+
+async def ahandle_envd_api_transport_exception_with_health(
+    e: Exception,
+    envd_api: httpx.AsyncClient,
+) -> Exception:
+    """Async version of :func:`handle_envd_api_transport_exception_with_health`."""
+    if not isinstance(e, ENVD_API_TRANSPORT_ERRORS):
+        return e
+    try:
+        sandbox_running = await acheck_sandbox_health(envd_api)
+    except Exception as probe_error:
+        return format_sandbox_unreachable_exception(e, probe_error)
+    return handle_envd_api_transport_exception(e, sandbox_running)
+
+
+def get_message(e: httpx.Response) -> str:
+    """The error message of a response: the string ``message`` of its JSON object
+    body, else its text."""
+    try:
+        body = e.json()
+    except ValueError:
+        return e.text
+    if isinstance(body, dict) and isinstance(body.get("message"), str):
+        return body["message"]
+    return e.text
+
+
+def handle_envd_api_exception(
+    res: httpx.Response,
+    error_map: Optional[dict[int, Callable[[str], Exception]]] = None,
+):
+    """Handle errors from envd API responses by mapping HTTP status codes to specific exception types.
+
+    :param res: The HTTP response.
+    :param error_map: Optional map of HTTP status codes to exception factories that override the defaults.
+    :return: The corresponding exception, or ``None`` if the response is successful.
+    """
+    if res.is_success:
+        return
+
+    res.read()
+
+    return format_envd_api_exception(res.status_code, get_message(res), error_map)
+
+
+async def ahandle_envd_api_exception(
+    res: httpx.Response,
+    error_map: Optional[dict[int, Callable[[str], Exception]]] = None,
+):
+    """Async version of :func:`handle_envd_api_exception`."""
+    if res.is_success:
+        return
+
+    await res.aread()
+
+    return format_envd_api_exception(res.status_code, get_message(res), error_map)
+
+
+def format_envd_api_exception(
+    status_code: int,
+    message: str,
+    error_map: Optional[dict[int, Callable[[str], Exception]]] = None,
+):
+    """Map an HTTP status code and message to the appropriate exception.
+
+    :param status_code: The HTTP status code.
+    :param message: The error message from the response body.
+    :param error_map: Optional map of HTTP status codes to exception factories that override the defaults.
+    :return: The corresponding exception.
+    """
+    if error_map and status_code in error_map:
+        return error_map[status_code](message)
+
+    if status_code in _DEFAULT_API_ERROR_MAP:
+        return _DEFAULT_API_ERROR_MAP[status_code](message)
+
+    return SandboxException(f"{status_code}: {message}")

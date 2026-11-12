@@ -1,0 +1,22 @@
+I'll start by reading the events.json file to understand its structure.
+
+
+I have the data. Let me analyze it:
+
+- Purchase events: alice (30), bob (20), cara (40)
+- Purchase count: 3
+- Amount total: 90
+- Unique buyers: 3 (alice, bob, cara)
+
+Now I'll write the output file.
+
+
+Let me verify the output file was written correctly.
+
+
+The task is complete. I read `events.json`, filtered for purchase events, and wrote the summary to `out/purchase_summary.json`.
+
+**Results:**
+- Purchase count: 3 (alice: $30, bob: $20, cara: $40)
+- Amount total: $90
+- Unique buyers: 3 (alice, bob, cara)
