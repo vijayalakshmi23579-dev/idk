@@ -5,6 +5,7 @@ import asyncio
 import hashlib
 import os
 import shutil
+import subprocess
 import tempfile
 import threading
 import time
@@ -12,99 +13,12 @@ import uuid
 from dataclasses import dataclass, field, replace
 from enum import Enum
 from pathlib import Path
-from typing import Any, Awaitable, Callable, Literal
+from typing import Any, Awaitable, Callable
 
-from pydantic import BaseModel, Field, field_validator
 from agent_contracts import (
-    AcceptanceCheck, JoinCheck, TaskBudget, TaskResultEnvelope,
+    AcceptanceCheck, JoinCheck, TaskBudget, TaskResultEnvelope, TaskSpec,
 )
 from task_checks import evaluate_join_check, validate_acceptance_check, validate_join_check
-
-
-class TaskSpec(BaseModel):
-    schema_version: Literal["1.0"] = "1.0"
-    id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
-    instruction: str = Field(min_length=1, max_length=20_000)
-    recovery_of: str | None = Field(
-        default=None,
-        description="Failed or blocked node ID this bounded recovery task replaces.",
-    )
-    needs: list[str] = Field(default_factory=list)
-    read_files: list[str] = Field(default_factory=list)
-    write_files: list[str] = Field(default_factory=list)
-    assumptions: list[str] = Field(
-        default_factory=list,
-        max_length=20,
-        description="Context assumptions the worker should preserve or report as invalid.",
-    )
-    join_criteria: list[str] = Field(
-        default_factory=list,
-        max_length=20,
-        description="Conditions the parent should check when integrating this result.",
-    )
-    join_checks: list[JoinCheck] = Field(
-        default_factory=list,
-        description="Deterministic assertions over outputs from declared dependencies.",
-    )
-    non_goals: list[str] = Field(
-        default_factory=list,
-        description="Explicitly excluded work for this node.",
-    )
-    output_schema: dict[str, Any] | None = Field(
-        default=None,
-        description="JSON Schema required for the worker's structured output.",
-    )
-    dependency_output_schemas: dict[str, dict[str, Any]] = Field(
-        default_factory=dict,
-        description=(
-            "Optional JSON Schemas keyed by prerequisite ID, checked before "
-            "this task receives dependency outputs."
-        ),
-    )
-    acceptance: list[AcceptanceCheck] = Field(
-        default_factory=list,
-        description="Deterministic checks; exists checks must target write_files.",
-    )
-    budget: TaskBudget = Field(
-        default_factory=TaskBudget,
-        description="Hard per-node token, call, time, and tool-error limits.",
-    )
-    complexity: int = Field(
-        default=3, ge=1, le=5,
-        description="Planner estimate from routine (1) to strong reasoning (5).",
-    )
-    tier_hint: Literal["T1", "T2", "T3"] | None = Field(
-        default=None,
-        description="Optional override for the configured complexity-to-tier mapping.",
-    )
-    verification_mode: Literal["none", "independent"] = Field(
-        default="none",
-        description=(
-            "Request a fresh-context independent verifier after deterministic checks. "
-            "Requires a verifier model distinct from the worker model."
-        ),
-    )
-    max_escalations: int = Field(
-        default=1,
-        ge=0,
-        le=1,
-        description="Maximum evidence-triggered stronger-tier retries within this task budget.",
-    )
-
-    @field_validator("instruction")
-    @classmethod
-    def _trim_instruction(cls, value: str) -> str:
-        value = value.strip()
-        if not value:
-            raise ValueError("instruction must not be empty")
-        return value
-
-    @field_validator("needs", "read_files", "write_files")
-    @classmethod
-    def _unique_values(cls, values: list[str]) -> list[str]:
-        if len(values) != len(set(values)):
-            raise ValueError("list values must be unique")
-        return values
 
 
 class TaskStatus(str, Enum):
@@ -141,6 +55,7 @@ class TaskFileScope:
     leases: "FileLeaseRegistry"
     staging_root: str | None = None
     baseline_write_hashes: dict[str, str | None] = field(default_factory=dict)
+    staging_kind: str | None = None
 
     def check_access(self, tool_name: str, file_path: str) -> str | None:
         try:
@@ -275,8 +190,14 @@ def _file_sha256(path: str) -> str | None:
 def _stage_task_scope(scope: TaskFileScope) -> TaskFileScope:
     if not scope.write_paths:
         return scope
-    staging_root = tempfile.mkdtemp(prefix="agent-task-stage-")
+    staging_root, staging_kind = _create_staging_area(scope.project_root)
     baseline: dict[str, str | None] = {}
+    staged_scope = replace(
+        scope,
+        staging_root=staging_root,
+        staging_kind=staging_kind,
+        baseline_write_hashes=baseline,
+    )
     try:
         for path in sorted(scope.read_paths | scope.write_paths):
             staged_path = os.path.join(
@@ -290,14 +211,90 @@ def _stage_task_scope(scope: TaskFileScope) -> TaskFileScope:
                 raise ValueError(f"Task-scoped path is not a regular file: {path}")
             if path in scope.write_paths:
                 baseline[path] = _file_sha256(path)
-        return replace(
-            scope,
-            staging_root=staging_root,
-            baseline_write_hashes=baseline,
-        )
+        return staged_scope
     except Exception:
-        shutil.rmtree(staging_root, ignore_errors=True)
+        _remove_staging_area(staged_scope)
         raise
+
+
+def _create_staging_area(project_root: str) -> tuple[str, str]:
+    """Use a detached worktree for Git roots; otherwise use an isolated directory."""
+    root = os.path.realpath(os.path.abspath(project_root))
+    try:
+        git_root = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        git_root = None
+
+    if git_root is not None and git_root.returncode == 0:
+        canonical_git_root = os.path.realpath(git_root.stdout.strip())
+        if canonical_git_root == root:
+            container = tempfile.mkdtemp(prefix="agent-task-worktree-")
+            worktree = os.path.join(container, "workspace")
+            try:
+                result = subprocess.run(
+                    ["git", "worktree", "add", "--detach", worktree, "HEAD"],
+                    cwd=root,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                    check=False,
+                )
+            except (OSError, subprocess.TimeoutExpired):
+                result = None
+            if result is not None and result.returncode == 0:
+                return worktree, "git_worktree"
+            shutil.rmtree(container, ignore_errors=True)
+            try:
+                subprocess.run(
+                    ["git", "worktree", "prune"],
+                    cwd=root,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                    check=False,
+                )
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+
+    return tempfile.mkdtemp(prefix="agent-task-stage-"), "directory"
+
+
+def _remove_staging_area(scope: TaskFileScope) -> None:
+    if scope.staging_root is None:
+        return
+    if scope.staging_kind != "git_worktree":
+        shutil.rmtree(scope.staging_root, ignore_errors=True)
+        return
+
+    try:
+        result = subprocess.run(
+            ["git", "worktree", "remove", "--force", scope.staging_root],
+            cwd=scope.project_root,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        if result.returncode != 0:
+            shutil.rmtree(scope.staging_root, ignore_errors=True)
+            subprocess.run(
+                ["git", "worktree", "prune"],
+                cwd=scope.project_root,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+            )
+    except (OSError, subprocess.TimeoutExpired):
+        shutil.rmtree(scope.staging_root, ignore_errors=True)
+    shutil.rmtree(os.path.dirname(scope.staging_root), ignore_errors=True)
 
 
 def _commit_task_staging(scope: TaskFileScope) -> None:
@@ -368,8 +365,7 @@ def _commit_task_staging(scope: TaskFileScope) -> None:
 
 
 def _cleanup_task_staging(scope: TaskFileScope) -> None:
-    if scope.staging_root is not None:
-        shutil.rmtree(scope.staging_root, ignore_errors=True)
+    _remove_staging_area(scope)
 
 
 def validate_task_graph(
@@ -474,6 +470,32 @@ def validate_task_graph(
                     )
         normalized.append(ValidatedTask(task, reads, writes))
 
+    integrators = [node for node in normalized if node.spec.role == "integrator"]
+    if integrators:
+        if len(integrators) != 1:
+            raise ValueError("A Task DAG may declare only one integrator node")
+        integrator = integrators[0]
+        if not integrator.write_paths:
+            raise ValueError("The integrator node must declare its output write scope")
+        for node in normalized:
+            if node.spec.id == integrator.spec.id:
+                continue
+            if node.write_paths and not depends_transitively(
+                integrator.spec.id, node.spec.id,
+            ):
+                raise ValueError(
+                    f"Integrator {integrator.spec.id} must depend on writer {node.spec.id}."
+                )
+            if any(
+                _paths_overlap(integrator_path, worker_path)
+                for integrator_path in integrator.write_paths
+                for worker_path in node.write_paths
+            ):
+                raise ValueError(
+                    f"Integrator {integrator.spec.id} must not share write paths "
+                    f"with Task {node.spec.id}."
+                )
+
     for index, left in enumerate(normalized):
         for right in normalized[index + 1:]:
             ordered = (
@@ -520,6 +542,7 @@ async def run_task_graph(
     run_id: str | None = None,
     max_parallel: int = 4,
     on_event: Callable[[dict[str, object]], None] | None = None,
+    cancel_event: asyncio.Event | None = None,
 ) -> list[TaskOutcome]:
     """Run conflict-free ready tasks concurrently within the configured limit.
 
@@ -615,7 +638,25 @@ async def run_task_graph(
         if not pending and not active:
             break
 
+        if cancel_event is not None and cancel_event.is_set():
+            for node in pending:
+                outcome = outcomes[node.spec.id]
+                outcome.status = TaskStatus.FAILED
+                outcome.error = "Task run was cancelled before this node started."
+                emit(node.spec.id, "failed", error_type="RunCancelled")
+            for task in active:
+                task.cancel()
+            if not active:
+                break
+            ready = []
+            launch = []
+        else:
+            ready = None
+            launch = None
+
         for node in pending:
+            if cancel_event is not None and cancel_event.is_set():
+                break
             dependency_states = [
                 outcomes[dependency].status for dependency in node.spec.needs
             ]
@@ -632,13 +673,14 @@ async def run_task_graph(
                 outcomes[node.spec.id].error = "A required dependency did not succeed."
                 emit(node.spec.id, "blocked")
 
-        ready = [
-            node for node in pending
-            if outcomes[node.spec.id].status == TaskStatus.PENDING
-            and all(outcomes[dep].status == TaskStatus.SUCCEEDED for dep in node.spec.needs)
-        ]
-        available_slots = max_parallel - len(active)
-        launch = ready[:available_slots] if available_slots > 0 else []
+        if ready is None:
+            ready = [
+                node for node in pending
+                if outcomes[node.spec.id].status == TaskStatus.PENDING
+                and all(outcomes[dep].status == TaskStatus.SUCCEEDED for dep in node.spec.needs)
+            ]
+            available_slots = max_parallel - len(active)
+            launch = ready[:available_slots] if available_slots > 0 else []
 
         for node in launch:
             outcome = outcomes[node.spec.id]
@@ -650,8 +692,20 @@ async def run_task_graph(
             active[task] = node.spec.id
 
         if active and (not launch or len(launch) < len(ready)):
-            done, _ = await asyncio.wait(active, return_when=asyncio.FIRST_COMPLETED)
+            waiters: set[asyncio.Future] = set(active)
+            cancel_waiter = None
+            if cancel_event is not None and not cancel_event.is_set():
+                cancel_waiter = asyncio.create_task(cancel_event.wait())
+                waiters.add(cancel_waiter)
+            done, _ = await asyncio.wait(waiters, return_when=asyncio.FIRST_COMPLETED)
+            if cancel_waiter is not None:
+                if cancel_waiter in done:
+                    continue
+                cancel_waiter.cancel()
+                await asyncio.gather(cancel_waiter, return_exceptions=True)
             for task in done:
+                if task not in active:
+                    continue
                 task_id = active.pop(task)
                 outcome = outcomes[task_id]
                 try:

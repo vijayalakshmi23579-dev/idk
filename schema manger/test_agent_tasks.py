@@ -41,6 +41,30 @@ def make_context(root: str) -> ToolUseContext:
 
 async def main():
     with tempfile.TemporaryDirectory() as root:
+        small_estimate = {
+            "estimated_steps": 3,
+            "sequential_dependency": False,
+            "independent_branches": 3,
+            "read_heavy": True,
+            "disjoint_writes": True,
+            "uncertain_steps": False,
+        }
+        estimate_input = AgentTasksInput(
+            tasks=[
+                {"id": "small-a", "instruction": "Inspect A"},
+                {"id": "small-b", "instruction": "Inspect B"},
+                {"id": "small-c", "instruction": "Inspect C"},
+            ],
+            estimate=json.dumps(small_estimate),
+        )
+        assert estimate_input.estimate.estimated_steps == 3
+        small_result = await AgentTasksTool.call(
+            estimate_input,
+            make_context(root),
+        )
+        assert small_result.data["mode"] == "single"
+        assert small_result.data["tasks"] == []
+
         first_path = os.path.join(root, "first.py")
         second_path = os.path.join(root, "second.py")
         output_path = os.path.join(root, "combined.py")
@@ -59,6 +83,8 @@ async def main():
         worker_budgets: dict[str, tuple[int, int]] = {}
         progress_events = []
         slow_worker_closed = asyncio.Event()
+        cancel_worker_started = asyncio.Event()
+        cancel_worker_closed = asyncio.Event()
         verifier_cancelled = asyncio.Event()
 
         single_result = await AgentTasksTool.call(
@@ -204,6 +230,48 @@ async def main():
                 yield message
                 yield Terminal(reason="completed")
                 return
+            if task_id in ("expansion-valid", "expansion-widening"):
+                proposed_path = (
+                    second_path if task_id == "expansion-widening" else first_path
+                )
+                message = create_assistant_message(
+                    content=json.dumps({
+                        "status": "contract_change_request",
+                        "summary": "The task needs a bounded deeper breakdown.",
+                        "output": {},
+                        "expansion_request": {
+                            "schema_version": "1.0",
+                            "reason": "Inspect the source, then synthesize its findings.",
+                            "estimate": {
+                                "estimated_steps": 12,
+                                "sequential_dependency": True,
+                                "independent_branches": 1,
+                                "read_heavy": True,
+                                "disjoint_writes": False,
+                                "uncertain_steps": False,
+                            },
+                            "tasks": [
+                                {
+                                    "id": "expansion-inspect",
+                                    "instruction": "Inspect the declared source.",
+                                    "read_files": [proposed_path],
+                                },
+                                {
+                                    "id": "expansion-summarize",
+                                    "instruction": "Summarize the inspected source.",
+                                    "needs": ["expansion-inspect"],
+                                    "read_files": [proposed_path],
+                                },
+                            ],
+                        },
+                    }),
+                    stop_reason="end_turn",
+                    usage={"output_tokens": 8},
+                )
+                params.messages.append(message)
+                yield message
+                yield Terminal(reason="completed")
+                return
             if task_id == "input-budget-overrun":
                 message = create_assistant_message(
                     content="This response exceeds its input budget",
@@ -246,6 +314,14 @@ async def main():
                     ),
                 )
                 return
+            if task_id == "cancel-active":
+                cancel_worker_started.set()
+                try:
+                    await asyncio.Event().wait()
+                finally:
+                    cancel_worker_closed.set()
+                yield Terminal(reason="aborted_tools")
+                return
 
             if task_id in ("first", "second"):
                 active_readers += 1
@@ -258,6 +334,8 @@ async def main():
                 active_readers -= 1
             elif task_id in (
                 "blocked-dependent", "expansion-control", "expansion-observer",
+                "cancel-control-1", "cancel-control-2",
+                "idempotent-a", "idempotent-b", "idempotent-c",
             ):
                 output = f"{task_id} output"
             elif task_id == "schema":
@@ -985,6 +1063,186 @@ async def main():
             assert verifier_cancelled.is_set()
         finally:
             agent_tasks.query = original_query
+
+        agent_tasks.query = fake_query
+        try:
+            expansion_result = await AgentTasksTool.call(
+                AgentTasksInput(
+                    tasks=[
+                        {
+                            "id": "expansion-valid",
+                            "instruction": "Propose a deeper breakdown within this file scope",
+                            "read_files": [first_path],
+                        },
+                        {
+                            "id": "expansion-widening",
+                            "instruction": "Attempt to propose an undeclared file",
+                            "read_files": [first_path],
+                        },
+                        {
+                            "id": "expansion-control",
+                            "instruction": "Continue the unrelated branch",
+                        },
+                    ],
+                    estimate=SplitEstimate(
+                        estimated_steps=12,
+                        sequential_dependency=False,
+                        independent_branches=3,
+                        read_heavy=True,
+                        disjoint_writes=False,
+                        uncertain_steps=False,
+                    ),
+                ),
+                recovery_context,
+            )
+        finally:
+            agent_tasks.query = original_query
+
+        expansion_outcomes = {
+            item["id"]: item for item in expansion_result.data["tasks"]
+        }
+        proposal = expansion_outcomes["expansion-valid"]["expansion_request"]
+        assert expansion_outcomes["expansion-valid"]["status"] == "contract_change_request"
+        assert proposal["reason"] == "Inspect the source, then synthesize its findings."
+        assert [node["id"] for node in proposal["tasks"]] == [
+            "expansion-inspect", "expansion-summarize",
+        ]
+        assert proposal["tasks"][1]["needs"] == ["expansion-inspect"]
+        assert "expansion-inspect" not in prompts
+        assert expansion_outcomes["expansion-widening"]["status"] == "failed"
+        assert "widens the read scope" in expansion_outcomes[
+            "expansion-widening"
+        ]["error"]
+        assert expansion_outcomes["expansion-control"]["status"] == "succeeded"
+
+        idempotent_input = AgentTasksInput(
+            idempotency_key="stable-run-key",
+            tasks=[
+                {"id": "idempotent-a", "instruction": "Independent A"},
+                {"id": "idempotent-b", "instruction": "Independent B"},
+                {"id": "idempotent-c", "instruction": "Independent C"},
+            ],
+            estimate=SplitEstimate(
+                estimated_steps=12,
+                sequential_dependency=False,
+                independent_branches=3,
+                read_heavy=True,
+                disjoint_writes=False,
+                uncertain_steps=False,
+            ),
+        )
+        agent_tasks.query = fake_query
+        try:
+            first_idempotent_result = await AgentTasksTool.call(
+                idempotent_input, recovery_context,
+            )
+        finally:
+            agent_tasks.query = original_query
+        attempt_counts = {
+            task_id: len(worker_model_attempts[task_id])
+            for task_id in ("idempotent-a", "idempotent-b", "idempotent-c")
+        }
+        replay_context = make_context(root)
+        replay_context._store = Store(session_db_path)
+        agent_tasks.query = fake_query
+        try:
+            replay_result = await AgentTasksTool.call(
+                idempotent_input, replay_context,
+            )
+        finally:
+            agent_tasks.query = original_query
+        assert replay_result.data["mode"] == "idempotent_replay"
+        assert replay_result.data["run_id"] == first_idempotent_result.data["run_id"]
+        assert replay_result.data["run_status"] == "completed"
+        assert {
+            task_id: len(worker_model_attempts[task_id])
+            for task_id in attempt_counts
+        } == attempt_counts
+        try:
+            await AgentTasksTool.call(
+                AgentTasksInput(
+                    idempotency_key="stable-run-key",
+                    estimate=idempotent_input.estimate,
+                    tasks=[
+                        {"id": "idempotent-a", "instruction": "Changed A"},
+                        {"id": "idempotent-b", "instruction": "Independent B"},
+                        {"id": "idempotent-c", "instruction": "Independent C"},
+                    ],
+                ),
+                replay_context,
+            )
+            raise AssertionError("a key cannot replay a different Task request")
+        except ValueError as error:
+            assert "different request" in str(error)
+        replay_context._store.close()
+
+        cancellation_context = make_context(root)
+        cancellation_context._store = Store(session_db_path)
+        cancellation_context._fallback_model = "test/parent-fallback"
+        agent_tasks.query = fake_query
+        cancellation_task = asyncio.create_task(AgentTasksTool.call(
+            AgentTasksInput(
+                tasks=[
+                    {"id": "cancel-active", "instruction": "Wait for cancellation"},
+                    {"id": "cancel-control-1", "instruction": "Finish normally"},
+                    {"id": "cancel-control-2", "instruction": "Finish normally"},
+                ],
+                estimate=SplitEstimate(
+                    estimated_steps=12,
+                    sequential_dependency=False,
+                    independent_branches=3,
+                    read_heavy=True,
+                    disjoint_writes=False,
+                    uncertain_steps=False,
+                ),
+            ),
+            cancellation_context,
+        ))
+        try:
+            await asyncio.wait_for(cancel_worker_started.wait(), timeout=1)
+            cancellation_run_id = next(
+                run_id for run_id, record in cancellation_context._task_runs.items()
+                if record["run_status"] == "running"
+            )
+            cancel_input = AgentTasksInput(cancel_run_id=cancellation_run_id)
+            cancel_permission = await agent_tasks._check_permissions(
+                cancel_input, cancellation_context,
+            )
+            assert cancel_permission.behavior == "ask"
+            assert "already committed will remain" in cancel_permission.message
+            cancel_result = await AgentTasksTool.call(
+                cancel_input, cancellation_context,
+            )
+            assert cancel_result.data["mode"] == "cancellation_requested"
+            reconcile_validation = agent_tasks._validate_input(
+                AgentTasksInput(
+                    reconcile_run_id=cancellation_run_id,
+                    side_effects_reviewed=True,
+                ),
+                cancellation_context,
+            )
+            assert reconcile_validation.result is False
+            assert "active Task run cannot be reconciled" in reconcile_validation.message
+            cancelled_run = await asyncio.wait_for(cancellation_task, timeout=2)
+        finally:
+            agent_tasks.query = original_query
+        assert cancel_worker_closed.is_set()
+        assert cancel_result.data["cancel_requested"] is True
+        assert [item["status"] for item in cancelled_run.data["tasks"]] == [
+            "failed", "succeeded", "succeeded",
+        ]
+        cancellation_record = cancellation_context._store.get_task_run(
+            cancellation_run_id, root, cancellation_context.session_id,
+        )
+        assert cancellation_record["run_status"] == "completed"
+        assert cancellation_record["cancel_requested"] is True
+        assert cancellation_record["cancel_requested_at"] is not None
+        repeated_cancel_validation = agent_tasks._validate_input(
+            AgentTasksInput(cancel_run_id=cancellation_run_id),
+            cancellation_context,
+        )
+        assert repeated_cancel_validation.result is False
+        cancellation_context._store.close()
         recovery_context._store.close()
 
         clear()

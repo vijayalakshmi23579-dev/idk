@@ -11,11 +11,11 @@ import uuid
 from typing import Any
 
 from jsonschema import validate as validate_json_schema
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from agent_contracts import (
-    TaskBudget, TaskResultEnvelope, TaskRunBudget, TaskWorkerRequest,
-    VerificationResult, WorkerUsage,
+    TaskBudget, TaskExpansionRequest, TaskResultEnvelope, TaskRunBudget,
+    TaskWorkerRequest, VerificationResult, WorkerUsage,
 )
 from loop_guard import LoopGuardState
 from messages import ToolResultMessage, create_user_message
@@ -122,11 +122,22 @@ class AgentTasksInput(BaseModel):
             "Set complexity and tier_hint deliberately."
         ),
     )
+    idempotency_key: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=128,
+        description=(
+            "Optional stable key for retrying the same Task DAG without "
+            "launching duplicate workers. Reuse it only for identical input."
+        ),
+    )
     estimate: SplitEstimate | None = Field(
         default=None,
         description=(
-            "Planner estimate used by the deterministic split gate. Without it, "
-            "the runtime stays single-agent."
+            "Planner estimate used by the deterministic split gate; provide an object "
+            "with estimated_steps, sequential_dependency, independent_branches, "
+            "read_heavy, disjoint_writes, and uncertain_steps. A JSON-encoded string "
+            "is also normalized. Missing estimate stays single-agent."
         ),
     )
     recovery_of_run: str | None = Field(
@@ -141,6 +152,14 @@ class AgentTasksInput(BaseModel):
         description=(
             "Read-only inspection of a persisted Task run. Supply this without "
             "tasks to retrieve status and declared scopes; it never retries work."
+        ),
+    )
+    cancel_run_id: str | None = Field(
+        default=None,
+        description=(
+            "Request cancellation of a Task run that is still active in this process. "
+            "Cancellation stops pending work and discards uncommitted worker staging; "
+            "already committed successful nodes are not undone."
         ),
     )
     reconcile_run_id: str | None = Field(
@@ -164,16 +183,39 @@ class AgentTasksInput(BaseModel):
         ),
     )
 
+    @field_validator("idempotency_key")
+    @classmethod
+    def _trim_idempotency_key(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        if not value:
+            raise ValueError("idempotency_key must not be empty")
+        return value
+
+    @field_validator("estimate", mode="before")
+    @classmethod
+    def _parse_estimate_object(cls, value: Any) -> Any:
+        if not isinstance(value, str):
+            return value
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError:
+            return value
+
     @model_validator(mode="after")
     def _validate_operation(self) -> "AgentTasksInput":
-        operations = [self.inspect_run_id, self.reconcile_run_id]
+        operations = [self.inspect_run_id, self.cancel_run_id, self.reconcile_run_id]
         if sum(operation is not None for operation in operations) > 1:
-            raise ValueError("Run inspection and reconciliation are separate operations")
+            raise ValueError("Run control operations must be submitted separately")
         if self.inspect_run_id:
-            if self.tasks or self.recovery_of_run or self.side_effects_reviewed:
-                raise ValueError("Run inspection cannot be combined with tasks, recovery, or reconciliation")
+            if self.tasks or self.recovery_of_run or self.side_effects_reviewed or self.idempotency_key:
+                raise ValueError("Run inspection cannot be combined with tasks, recovery, or other run operations")
+        elif self.cancel_run_id:
+            if self.tasks or self.recovery_of_run or self.side_effects_reviewed or self.idempotency_key:
+                raise ValueError("Run cancellation cannot be combined with tasks, recovery, or reconciliation")
         elif self.reconcile_run_id:
-            if self.tasks or self.recovery_of_run:
+            if self.tasks or self.recovery_of_run or self.idempotency_key:
                 raise ValueError("Run reconciliation cannot be combined with tasks or recovery")
             if not self.side_effects_reviewed:
                 raise ValueError("Review interrupted workspace side effects before reconciliation")
@@ -188,6 +230,12 @@ def _project_root(context: ToolUseContext) -> str:
     return os.path.realpath(
         os.path.abspath(getattr(context, "project_root", None) or os.getcwd())
     )
+
+
+def _task_request_hash(input: AgentTasksInput) -> str:
+    payload = input.model_dump(mode="json", exclude={"idempotency_key"})
+    encoded = json.dumps(payload, ensure_ascii=True, sort_keys=True)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
 def _task_run_registry(context: ToolUseContext) -> dict[str, dict[str, Any]]:
@@ -213,6 +261,8 @@ def _serialize_task_run(run_id: str, record: dict[str, Any]) -> dict[str, Any]:
         "schema_version": "1.0",
         "run_id": run_id,
         "run_status": record.get("run_status", "completed"),
+        "cancel_requested": record.get("cancel_requested", False),
+        "cancel_requested_at": record.get("cancel_requested_at"),
         "progress": record.get("progress", {}),
         "reconciled_at": record.get("reconciled_at"),
         "side_effects_reviewed": record.get("side_effects_reviewed", False),
@@ -255,6 +305,8 @@ def _restore_task_run(payload: dict[str, Any]) -> dict[str, Any]:
         )
     return {
         "run_status": payload.get("run_status", "completed"),
+        "cancel_requested": payload.get("cancel_requested", False),
+        "cancel_requested_at": payload.get("cancel_requested_at"),
         "progress": payload.get("progress", {}),
         "reconciled_at": payload.get("reconciled_at"),
         "side_effects_reviewed": payload.get("side_effects_reviewed", False),
@@ -464,8 +516,8 @@ def _recovery_parent(
 
 
 def _validate_input(input: AgentTasksInput, context: ToolUseContext) -> ValidationResult:
-    if input.inspect_run_id or input.reconcile_run_id:
-        run_id = input.inspect_run_id or input.reconcile_run_id
+    if input.inspect_run_id or input.cancel_run_id or input.reconcile_run_id:
+        run_id = input.inspect_run_id or input.cancel_run_id or input.reconcile_run_id
         record = (
             _task_run_registry(context).get(run_id)
             or _load_task_run(context, run_id)
@@ -476,6 +528,35 @@ def _validate_input(input: AgentTasksInput, context: ToolUseContext) -> Validati
                 message="Task run was not found in this session and project.",
                 error_code=4,
             )
+        if input.cancel_run_id and (
+            record.get("run_status") not in ("running", "cancelling")
+            or record.get("_cancel_event") is None
+            or (
+                record.get("_run_done_event") is not None
+                and record["_run_done_event"].is_set()
+            )
+        ):
+            return ValidationResult(
+                result=False,
+                message=(
+                    "Only a Task run active in this process can be cancelled. "
+                    "Inspect or reconcile interrupted runs after reviewing side effects."
+                ),
+                error_code=6,
+            )
+        if (
+            input.reconcile_run_id
+            and record.get("_run_done_event") is not None
+            and not record["_run_done_event"].is_set()
+        ):
+            return ValidationResult(
+                result=False,
+                message=(
+                    "An active Task run cannot be reconciled. Cancel it and wait "
+                    "for all workers to stop before reviewing partial side effects."
+                ),
+                error_code=7,
+            )
         if input.reconcile_run_id and record.get("run_status", "completed") == "completed":
             return ValidationResult(
                 result=False,
@@ -483,6 +564,15 @@ def _validate_input(input: AgentTasksInput, context: ToolUseContext) -> Validati
                 error_code=5,
             )
         return ValidationResult(result=True)
+    if input.idempotency_key and (
+        getattr(context, "_store", None) is None
+        or not getattr(context, "session_id", None)
+    ):
+        return ValidationResult(
+            result=False,
+            message="Task idempotency keys require a persistent session Store.",
+            error_code=8,
+        )
     try:
         validate_task_graph(input.tasks, _project_root(context))
         recovery_parent = _recovery_parent(input, context)
@@ -531,6 +621,34 @@ def _dependency_context(dependencies: dict[str, Any]) -> str:
     return json.dumps(payload, ensure_ascii=True)
 
 
+def _validate_expansion_request(
+    request: TaskExpansionRequest,
+    parent_task: TaskSpec,
+    scope: TaskFileScope,
+) -> TaskExpansionRequest:
+    graph = validate_task_graph(request.tasks, scope.project_root)
+    allowed_reads = scope.read_paths | scope.write_paths
+    allowed_writes = scope.write_paths
+
+    for node in graph:
+        if not node.read_paths.issubset(allowed_reads):
+            raise ValueError(
+                f"Expansion task {node.spec.id} widens the read scope of "
+                f"parent task {parent_task.id}."
+            )
+        if not node.write_paths.issubset(allowed_writes):
+            raise ValueError(
+                f"Expansion task {node.spec.id} widens the write scope of "
+                f"parent task {parent_task.id}."
+            )
+
+    if request.estimate.independent_branches > sum(
+        not task.needs for task in request.tasks
+    ):
+        raise ValueError("Expansion estimate overstates independent DAG roots.")
+    return request
+
+
 def _task_prompt(
     task: TaskSpec,
     dependencies: dict[str, Any],
@@ -559,8 +677,14 @@ def _task_prompt(
     ) or "- (none)"
     dependency_schemas = json.dumps(task.dependency_output_schemas, ensure_ascii=True)
     mode_note = (
-        "This task may edit only its declared write files. Read each existing "
-        "file before editing it."
+        (
+            "You are the DAG's single integrator. Wait for every declared writer "
+            "dependency, inspect its outputs, and produce the final integration "
+            "within your disjoint write scope."
+            if task.role == "integrator" else
+            "This task may edit only its declared write files. Read each existing "
+            "file before editing it."
+        )
         if task.write_files else
         "This is a read-only task. Do not modify files."
     )
@@ -583,6 +707,7 @@ def _task_prompt(
         )
     return (
         f"Task ID: {task.id}\n"
+        f"Task role: {task.role}\n"
         f"{recovery_note}"
         f"Project root: {project_root}\n\n"
         f"Assignment:\n{task.instruction}\n\n"
@@ -606,8 +731,13 @@ def _task_prompt(
         f"{previous_attempt}"
         "If you cannot complete within this contract, return JSON with status "
         "`failed`, `needs_escalation`, or `contract_change_request`, plus a "
-        "short summary, an output object, and optional diagnostics. A request "
-        "does not grant new scope; the parent decides whether to replan.\n\n"
+        "short summary, an output object, and optional diagnostics. For a "
+        "deeper breakdown that stays within this task's file scopes, a "
+        "`contract_change_request` may include `expansion_request` with a "
+        "reason, split estimate, and proposed TaskSpec nodes. The proposal is "
+        "advisory only: it is not executed, and its scopes must remain within "
+        "the declared parent scope. A request does not grant new scope; the "
+        "parent decides whether to submit a new Task DAG.\n\n"
         "Work only on this assignment. Do not delegate or attempt tools that "
         "were not provided. Return a concise summary (under 300 tokens). If an "
         "output schema is provided, return JSON with `summary` and `output`, "
@@ -997,6 +1127,9 @@ async def _run_child_task(
         }
     ):
         request = TaskWorkerRequest.model_validate(worker_response)
+        expansion_request = request.expansion_request
+        if expansion_request is not None:
+            _validate_expansion_request(expansion_request, task, scope)
         return TaskResultEnvelope(
             run_id=run_id,
             node_id=task.id,
@@ -1005,6 +1138,7 @@ async def _run_child_task(
             models_used=observed_models or [child.model_override],
             summary=request.summary,
             output=request.output,
+            expansion_request=expansion_request,
             usage=worker_usage,
             diagnostics=request.diagnostics,
         )
@@ -1164,6 +1298,33 @@ async def _call(
                 "This operation does not resume or retry the run."
                 if record.get("run_status") != "completed" else
                 "Run is complete; inspect task outputs or recovery state as needed."
+            ),
+        })
+    if input.cancel_run_id:
+        record = _task_run_registry(context)[input.cancel_run_id]
+        cancel_event = record["_cancel_event"]
+        if not record.get("cancel_requested"):
+            record["cancel_requested"] = True
+            record["cancel_requested_at"] = time.time()
+            record["run_status"] = "cancelling"
+            store = getattr(context, "_store", None)
+            session_id = getattr(context, "session_id", None)
+            if store is not None and session_id:
+                store.save_task_run(
+                    session_id,
+                    input.cancel_run_id,
+                    record["project_root"],
+                    _serialize_task_run(input.cancel_run_id, record),
+                )
+        cancel_event.set()
+        return ToolResult(data={
+            "mode": "cancellation_requested",
+            "run_id": input.cancel_run_id,
+            "run_status": record["run_status"],
+            "cancel_requested": True,
+            "next_action": (
+                "Wait for the active workers to stop, then inspect the final run "
+                "record. Successful nodes already committed are preserved."
             ),
         })
     if input.reconcile_run_id:
@@ -1363,6 +1524,45 @@ async def _call(
     if not _usage_within_budget(reserved_usage, run_budget):
         raise ValueError("Task run exceeds its aggregate budget")
 
+    idempotency_claimed = False
+    if input.idempotency_key:
+        if store is None or not session_id:
+            raise ValueError("Task idempotency keys require a persistent session Store")
+        existing_run_id = store.claim_task_idempotency(
+            session_id,
+            root,
+            input.idempotency_key,
+            _task_request_hash(input),
+            run_id,
+        )
+        if existing_run_id is not None:
+            existing_record = (
+                _task_run_registry(context).get(existing_run_id)
+                or _load_task_run(context, existing_run_id)
+            )
+            if existing_record is None:
+                raise RuntimeError(
+                    "Task idempotency key references a run record that is unavailable."
+                )
+            return ToolResult(data={
+                "run_id": existing_run_id,
+                "mode": "idempotent_replay",
+                "reason": (
+                    "This idempotency key already has a Task run; no workers were started."
+                ),
+                "recovery_of_run": input.recovery_of_run,
+                "recovery_depth": existing_record["recovery_depth"],
+                "run_status": existing_record.get("run_status", "completed"),
+                "events_persisted": True,
+                "run_persisted": True,
+                "cancel_requested": existing_record.get("cancel_requested", False),
+                "tasks": [
+                    _outcome_payload(outcome)
+                    for outcome in existing_record["outcomes"].values()
+                ],
+            })
+        idempotency_claimed = True
+
     task_run_registry = _task_run_registry(context)
     run_record = {
         "session_id": session_id or "",
@@ -1385,6 +1585,10 @@ async def _call(
         "run_budget": run_budget.model_dump(),
         "charged_usage": reserved_usage.model_dump(),
         "run_status": "running",
+        "cancel_requested": False,
+        "cancel_requested_at": None,
+        "_cancel_event": asyncio.Event(),
+        "_run_done_event": asyncio.Event(),
         "progress": {},
         "recovered_by": None,
     }
@@ -1427,6 +1631,10 @@ async def _call(
                 recovery_parent["recovered_task_runs"] = previous_recovered_task_runs
                 recovery_parent["charged_usage"] = base_usage.model_dump()
             task_run_registry.pop(run_id, None)
+            if idempotency_claimed and store is not None and session_id:
+                store.release_task_idempotency(
+                    session_id, root, input.idempotency_key, run_id,
+                )
             raise RuntimeError(f"Could not initialize Task run record: {error}") from error
 
     def publish_task_event(event: dict[str, object]) -> None:
@@ -1443,14 +1651,18 @@ async def _call(
             except Exception:
                 pass
 
-    outcomes = await run_task_graph(
-        input.tasks,
-        runner,
-        project_root=root,
-        run_id=run_id,
-        max_parallel=MAX_PARALLEL_READ_TASKS,
-        on_event=publish_task_event if store is not None or on_progress is not None else None,
-    )
+    try:
+        outcomes = await run_task_graph(
+            input.tasks,
+            runner,
+            project_root=root,
+            run_id=run_id,
+            max_parallel=MAX_PARALLEL_READ_TASKS,
+            on_event=publish_task_event if store is not None or on_progress is not None else None,
+            cancel_event=run_record["_cancel_event"],
+        )
+    finally:
+        run_record["_run_done_event"].set()
     if persistence_errors:
         raise RuntimeError(
             "Could not persist one or more Task lifecycle events: "
@@ -1523,6 +1735,7 @@ async def _call(
         "recovery_depth": recovery_depth,
         "events_persisted": store is not None and bool(session_id),
         "run_persisted": run_persisted,
+        "cancel_requested": run_record["cancel_requested"],
         "tasks": [
             _outcome_payload(outcome)
             for outcome in outcomes
@@ -1542,6 +1755,11 @@ def _outcome_payload(outcome: TaskOutcome) -> dict[str, Any]:
                 "usage": outcome.output.usage.model_dump(),
                 "models_used": outcome.output.models_used,
                 "escalations": outcome.output.escalations,
+                **({
+                    "expansion_request": outcome.output.expansion_request.model_dump(
+                        mode="json",
+                    ),
+                } if outcome.output.expansion_request is not None else {}),
             }
         return {
             "id": outcome.task_id,
@@ -1603,6 +1821,14 @@ async def _check_permissions(input: AgentTasksInput, context: ToolUseContext):
                 "Confirm that you reviewed possible workspace side effects."
             ),
         )
+    if input.cancel_run_id:
+        return PermissionAskDecision(
+            message=(
+                f"Cancel active Task run {input.cancel_run_id}? Pending nodes will "
+                "not start and uncommitted staged writes will be discarded. "
+                "Completed nodes already committed will remain."
+            ),
+        )
     if input.inspect_run_id:
         return PermissionAskDecision(
             message=f"Inspect Task run {input.inspect_run_id}? This will not execute workers.",
@@ -1620,9 +1846,20 @@ AgentTasksTool = build_tool(
         "The parent must supply a SplitEstimate. The deterministic gate keeps work "
         "single-agent when sequential or estimated at 8 steps or fewer; it selects "
         "wide only for at least 3 independent branches with read-heavy or disjoint "
-        "work. Uncertain work is explored in the parent first. Use `needs` for "
+        "work, and the estimate must describe more than 8 steps. Pass `estimate` "
+        "as an object with all six fields, e.g. "
+        "{\"estimated_steps\":12,\"sequential_dependency\":false,"
+        "\"independent_branches\":3,\"read_heavy\":true,"
+        "\"disjoint_writes\":false,\"uncertain_steps\":false}. Put every "
+        "parallel branch in one Task call; separate calls are separate runs. "
+        "For a sequential or <=8-step task, `mode=single` with an empty task "
+        "result is expected: continue in the parent and do not retry the same split. "
+        "Uncertain work is explored in the parent first. Use `needs` for "
         "real dependencies and declare exact read_files, write_files, assumptions, "
-        "and join_criteria. Set "
+        "and join_criteria. For multi-file code DAGs with multiple writers, "
+        "designate exactly one `role='integrator'` node, make it depend on every "
+        "writer, and give it a disjoint integration output scope. The runtime "
+        "rejects an integrator that skips writers or shares their write paths. Set "
         "complexity from 1 (routine) to 5 (strong reasoning); tier_hint may "
         "override the configured mapping. "
         "Read-only tasks and conflict-free disjoint writers may run concurrently. "
@@ -1635,9 +1872,13 @@ AgentTasksTool = build_tool(
         "as `recovery_of_run` and each replacement node's original ID as "
         "`recovery_of`. Recovery is limited to two levels and cannot widen "
         "the original file scopes. A contract change requiring a broader scope "
-        "needs a new parent-approved Task DAG."
+        "needs a new parent-approved Task DAG. For an uncertain Task response, "
+        "reuse the same `idempotency_key` only when retrying the identical request; "
+        "a changed DAG or budget requires a new key."
         " For a persisted run, use `inspect_run_id` alone to retrieve status and "
         "declared scopes; inspection never resumes or retries work. Use "
+        "`cancel_run_id` only for a currently active in-process run; cancellation "
+        "requires approval, stops pending work, and never undoes completed writes. Use "
         "`reconcile_run_id` only after reviewing possible partial writes and "
         "confirming `side_effects_reviewed`; this requires approval and marks "
         "unfinished nodes failed without replaying them."

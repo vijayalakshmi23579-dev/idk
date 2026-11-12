@@ -1,6 +1,7 @@
 """Offline tests for DAG validation, dependency payloads, and file leases."""
 import asyncio
 import os
+import subprocess
 import tempfile
 
 from agent_contracts import TaskResultEnvelope, WorkerUsage
@@ -311,6 +312,139 @@ async def main():
         assert "Workspace file changed" in conflicted[0].error
         assert open(staged_path, encoding="utf-8").read() == "external edit"
 
+        git_root = os.path.join(root, "git-project")
+        os.makedirs(git_root)
+        subprocess.run(
+            ["git", "init", git_root],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        tracked_path = os.path.join(git_root, "tracked.py")
+        with open(tracked_path, "w", encoding="utf-8") as source:
+            source.write("before")
+        subprocess.run(
+            ["git", "-C", git_root, "add", "tracked.py"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        subprocess.run(
+            [
+                "git", "-C", git_root,
+                "-c", "user.name=Task Test",
+                "-c", "user.email=task-test@example.invalid",
+                "commit", "-m", "initial",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+        async def worktree_runner(spec, dependencies, scope):
+            assert scope.staging_kind == "git_worktree"
+            with open(
+                scope.execution_path("Write", tracked_path),
+                "w",
+                encoding="utf-8",
+            ) as output:
+                output.write("after")
+                return TaskResultEnvelope(
+                run_id="worktree-test",
+                node_id=spec.id,
+                status="ok",
+                summary="Updated tracked file",
+            )
+
+        worktree_result = await run_task_graph([
+            TaskSpec(
+                id="git-worktree", instruction="Update a tracked file",
+                write_files=[tracked_path],
+            ),
+        ], worktree_runner, project_root=git_root)
+        assert worktree_result[0].status == TaskStatus.SUCCEEDED
+        assert open(tracked_path, encoding="utf-8").read() == "after"
+        worktrees = subprocess.run(
+            ["git", "worktree", "list", "--porcelain"],
+            cwd=git_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.splitlines()
+        assert [line for line in worktrees if line.startswith("worktree ")] == [
+            f"worktree {git_root}",
+        ]
+
+        module_a = os.path.join(root, "src", "module_a.py")
+        module_b = os.path.join(root, "src", "module_b.py")
+        integrated_output = os.path.join(root, "src", "integrated.py")
+
+        async def code_integrator_runner(spec, dependencies, scope):
+            if spec.role == "integrator":
+                assert set(dependencies) == {"worker-a", "worker-b"}
+                module_contents = [
+                    open(scope.execution_path("Read", path), encoding="utf-8").read()
+                    for path in (module_a, module_b)
+                ]
+                with open(
+                    scope.execution_path("Write", integrated_output),
+                    "w",
+                    encoding="utf-8",
+                ) as output:
+                    output.write("\n".join(module_contents))
+            else:
+                output_path = module_a if spec.id == "worker-a" else module_b
+                with open(
+                    scope.execution_path("Write", output_path),
+                    "w",
+                    encoding="utf-8",
+                ) as output:
+                    output.write(f"# {spec.id}")
+            return TaskResultEnvelope(
+                run_id="integrator-test",
+                node_id=spec.id,
+                status="ok",
+                summary=f"{spec.id} complete",
+            )
+
+        integration_tasks = [
+            TaskSpec(
+                id="worker-a", instruction="Write module A",
+                write_files=[module_a],
+            ),
+            TaskSpec(
+                id="worker-b", instruction="Write module B",
+                write_files=[module_b],
+            ),
+            TaskSpec(
+                id="integrate", role="integrator",
+                instruction="Integrate both modules",
+                needs=["worker-a", "worker-b"],
+                read_files=[module_a, module_b],
+                write_files=[integrated_output],
+            ),
+        ]
+        integrated = await run_task_graph(
+            integration_tasks,
+            code_integrator_runner,
+            project_root=root,
+            max_parallel=2,
+        )
+        assert all(result.status == TaskStatus.SUCCEEDED for result in integrated)
+        assert open(integrated_output, encoding="utf-8").read() == (
+            "# worker-a\n# worker-b"
+        )
+
+        try:
+            validate_task_graph([
+                integration_tasks[0],
+                integration_tasks[1],
+                integration_tasks[2].model_copy(update={"needs": ["worker-a"]}),
+            ], root)
+            raise AssertionError("integrator must depend on every writer")
+        except ValueError as error:
+            assert "must depend on writer worker-b" in str(error)
+
         try:
             validate_task_graph([
                 TaskSpec(
@@ -513,6 +647,55 @@ async def main():
             raise AssertionError("invalid output schemas should fail")
         except ValueError as error:
             assert "invalid output schema" in str(error)
+
+        cancel_path = os.path.join(root, "src", "cancelled.py")
+        with open(cancel_path, "w", encoding="utf-8") as target:
+            target.write("before")
+        cancel_event = asyncio.Event()
+        worker_started = asyncio.Event()
+        cancel_calls = []
+
+        async def cancellable_runner(spec, dependencies, scope):
+            cancel_calls.append(spec.id)
+            with open(
+                scope.execution_path("Write", cancel_path),
+                "w",
+                encoding="utf-8",
+            ) as target:
+                target.write("uncommitted")
+            worker_started.set()
+            await asyncio.Event().wait()
+            return TaskResultEnvelope(
+                run_id="cancel-test",
+                node_id=spec.id,
+                status="ok",
+                summary="Should not complete",
+            )
+
+        cancellation = asyncio.create_task(run_task_graph(
+            [
+                TaskSpec(
+                    id="cancel-active", instruction="Wait for cancellation",
+                    write_files=[cancel_path],
+                ),
+                TaskSpec(
+                    id="cancel-pending", instruction="Remain pending",
+                    write_files=[os.path.join(root, "src", "pending.py")],
+                ),
+            ],
+            cancellable_runner,
+            project_root=root,
+            max_parallel=1,
+            cancel_event=cancel_event,
+        ))
+        await asyncio.wait_for(worker_started.wait(), timeout=1)
+        cancel_event.set()
+        cancelled = await asyncio.wait_for(cancellation, timeout=1)
+        assert [outcome.status for outcome in cancelled] == [
+            TaskStatus.FAILED, TaskStatus.FAILED,
+        ]
+        assert cancel_calls == ["cancel-active"]
+        assert open(cancel_path, encoding="utf-8").read() == "before"
 
     print("Task DAG scheduler and file lease tests passed")
 

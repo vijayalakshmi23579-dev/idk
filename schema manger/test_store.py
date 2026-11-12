@@ -1,4 +1,5 @@
 """test_store.py — no network. Verifies append-only log + DAG + plan."""
+import hashlib
 import os
 import stat
 import tempfile
@@ -121,6 +122,37 @@ def main():
     assert store.get_task_run("run-1", os.path.join(tmp, "other-project")) is None
     assert store.get_task_run("run-1", tmp, "other-session") is None
     assert store.get_task_run("unknown-run", tmp) is None
+    request_hash = hashlib.sha256(b"stable task request").hexdigest()
+    assert store.claim_task_idempotency(
+        sid, tmp, "request-1", request_hash, "idempotent-run-1",
+    ) is None
+    store.save_task_run(sid, "idempotent-run-1", tmp, {
+        "schema_version": "1.0",
+        "run_id": "idempotent-run-1",
+        "status": "completed",
+    })
+    assert store.claim_task_idempotency(
+        sid, tmp, "request-1", request_hash, "idempotent-run-2",
+    ) == "idempotent-run-1"
+    try:
+        store.claim_task_idempotency(
+            sid, tmp, "request-1", hashlib.sha256(b"different request").hexdigest(),
+            "idempotent-run-3",
+        )
+        raise AssertionError("an idempotency key cannot identify different requests")
+    except ValueError as error:
+        assert "different request" in str(error)
+    store.release_task_idempotency(sid, tmp, "request-1", "idempotent-run-1")
+    assert store.claim_task_idempotency(
+        sid, tmp, "request-1", request_hash, "idempotent-run-4",
+    ) == "idempotent-run-1"
+    assert store.claim_task_idempotency(
+        sid, tmp, "orphan-request", request_hash, "orphan-run-1",
+    ) is None
+    store.release_task_idempotency(sid, tmp, "orphan-request", "orphan-run-1")
+    assert store.claim_task_idempotency(
+        sid, tmp, "orphan-request", request_hash, "orphan-run-2",
+    ) is None
     store.save_task_run(sid, "run-progress", tmp, {
         "schema_version": "1.0",
         "run_id": "run-progress",
@@ -143,6 +175,28 @@ def main():
     progress_run = store.get_task_run("run-progress", tmp, sid)
     assert progress_run["run_status"] == "finalizing"
     assert progress_run["progress"]["worker-b"]["status"] == "succeeded"
+    store.save_task_run(sid, "run-cancelling", tmp, {
+        "schema_version": "1.0",
+        "run_id": "run-cancelling",
+        "run_status": "cancelling",
+        "task_specs": {
+            "worker-e": {"schema_version": "1.0"},
+            "worker-f": {"schema_version": "1.0"},
+        },
+        "progress": {},
+    })
+    store.append_task_event(sid, "run-cancelling", {
+        "schema_version": "1.0",
+        "type": "task_lifecycle",
+        "event_id": "event-cancelling-worker-finish",
+        "run_id": "run-cancelling",
+        "attempt_id": "attempt-e",
+        "task_id": "worker-e",
+        "status": "failed",
+        "needs": [],
+        "occurred_at": 124.5,
+    })
+    assert store.get_task_run("run-cancelling", tmp, sid)["run_status"] == "cancelling"
     store.save_task_run(sid, "run-escalation", tmp, {
         "schema_version": "1.0",
         "run_id": "run-escalation",

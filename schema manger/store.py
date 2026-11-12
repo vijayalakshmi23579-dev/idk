@@ -88,6 +88,16 @@ CREATE TABLE IF NOT EXISTS task_runs (
 CREATE INDEX IF NOT EXISTS idx_task_runs_project
     ON task_runs(project_root, updated_at);
 
+CREATE TABLE IF NOT EXISTS task_idempotency (
+    session_id       TEXT NOT NULL,
+    project_root     TEXT NOT NULL,
+    idempotency_key  TEXT NOT NULL,
+    request_hash     TEXT NOT NULL,
+    run_id           TEXT NOT NULL,
+    created_at       REAL NOT NULL,
+    PRIMARY KEY (session_id, project_root, idempotency_key)
+);
+
 CREATE TABLE IF NOT EXISTS workflow_definitions (
     project_root  TEXT NOT NULL,
     workflow_id   TEXT NOT NULL,
@@ -357,7 +367,7 @@ class Store:
                     for node_id in task_ids
                 ):
                     run_payload["run_status"] = "finalizing"
-                else:
+                elif run_payload.get("run_status") != "cancelling":
                     run_payload["run_status"] = "running"
                 self.db.execute(
                     "UPDATE task_runs SET payload = ?, updated_at = ? "
@@ -642,6 +652,77 @@ class Store:
                 "session_id = excluded.session_id, project_root = excluded.project_root, "
                 "payload = excluded.payload, updated_at = excluded.updated_at",
                 prepared,
+            )
+
+    def claim_task_idempotency(
+        self,
+        session_id: str,
+        project_root: str,
+        idempotency_key: str,
+        request_hash: str,
+        run_id: str,
+    ) -> str | None:
+        """Claim a Task request key, or return its existing run ID."""
+        if not session_id or not run_id:
+            raise ValueError("Task idempotency requires session and run IDs")
+        if not idempotency_key or len(idempotency_key) > 128:
+            raise ValueError("Task idempotency key must contain 1-128 characters")
+        if not re.fullmatch(r"[0-9a-f]{64}", request_hash):
+            raise ValueError("Task idempotency request hash must be SHA-256")
+        canonical_root = os.path.realpath(os.path.abspath(project_root))
+        with self.db:
+            self.db.execute(
+                "INSERT OR IGNORE INTO task_idempotency "
+                "(session_id, project_root, idempotency_key, request_hash, run_id, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    session_id, canonical_root, idempotency_key,
+                    request_hash, run_id, time.time(),
+                ),
+            )
+            row = self.db.execute(
+                "SELECT request_hash, run_id FROM task_idempotency "
+                "WHERE session_id = ? AND project_root = ? AND idempotency_key = ?",
+                (session_id, canonical_root, idempotency_key),
+            ).fetchone()
+            if row["run_id"] != run_id:
+                persisted_run = self.db.execute(
+                    "SELECT 1 FROM task_runs WHERE run_id = ? AND session_id = ? "
+                    "AND project_root = ?",
+                    (row["run_id"], session_id, canonical_root),
+                ).fetchone()
+                if persisted_run is None:
+                    self.db.execute(
+                        "UPDATE task_idempotency SET request_hash = ?, run_id = ?, "
+                        "created_at = ? WHERE session_id = ? AND project_root = ? "
+                        "AND idempotency_key = ?",
+                        (
+                            request_hash, run_id, time.time(), session_id,
+                            canonical_root, idempotency_key,
+                        ),
+                    )
+                    return None
+            if row["request_hash"] != request_hash:
+                raise ValueError(
+                    "Task idempotency key was already used for a different request"
+                )
+            return None if row["run_id"] == run_id else str(row["run_id"])
+
+    def release_task_idempotency(
+        self,
+        session_id: str,
+        project_root: str,
+        idempotency_key: str,
+        run_id: str,
+    ) -> None:
+        """Release a claim only if the corresponding run was not persisted."""
+        canonical_root = os.path.realpath(os.path.abspath(project_root))
+        with self.db:
+            self.db.execute(
+                "DELETE FROM task_idempotency WHERE session_id = ? "
+                "AND project_root = ? AND idempotency_key = ? AND run_id = ? "
+                "AND NOT EXISTS (SELECT 1 FROM task_runs WHERE run_id = ?)",
+                (session_id, canonical_root, idempotency_key, run_id, run_id),
             )
 
     def get_task_run(
