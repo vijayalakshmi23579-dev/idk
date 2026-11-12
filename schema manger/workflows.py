@@ -1,13 +1,17 @@
 """Quarantined, declarative read-only workflows built from registered tools."""
 from __future__ import annotations
 
+import copy
 import json
+import os
 import re
+import shutil
+import tempfile
 import uuid
 from typing import Any, Literal
 
 from jsonschema import Draft202012Validator
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from execute import execute_tool
 from permission_types import PermissionAskDecision, PermissionAllowDecision
@@ -18,14 +22,32 @@ from tools.read import expand_path
 
 MAX_WORKFLOW_STEPS = 8
 MAX_WORKFLOW_RESULT_CHARS = 24_000
-WORKFLOW_READ_TOOLS = frozenset({"Read"})
+MAX_WORKFLOW_READ_BYTES = 32 * 1024 * 1024
+MAX_WORKFLOW_BASH_TIMEOUT_MS = 60_000
+WORKFLOW_SAFE_TOOLS = frozenset({"Read", "Bash"})
+WORKFLOW_SECRET_NAMES = frozenset({
+    ".aws", ".config", ".git", ".gnupg", ".netrc", ".npmrc", ".pypirc", ".ssh",
+    "credentials", "id_ed25519", "id_rsa",
+})
+
+
+def _is_credential_like_path(path: str) -> bool:
+    parts = path.replace("\\", "/").lower().split("/")
+    basename = parts[-1]
+    return (
+        any(part in WORKFLOW_SECRET_NAMES for part in parts)
+        or basename.startswith(".env")
+        or "secret" in basename
+        or "credential" in basename
+        or basename.endswith((".pem", ".key", ".p12", ".pfx"))
+    )
 
 
 class WorkflowStep(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
-    tool: Literal["Read"]
+    tool: Literal["Read", "Bash"]
     arguments: dict[str, Any]
 
 
@@ -45,14 +67,39 @@ class WorkflowDefinition(BaseModel):
     description: str = Field(min_length=1, max_length=500)
     input_schema: dict[str, Any]
     output_schema: dict[str, Any] | None = None
+    read_files: list[str] = Field(
+        default_factory=list,
+        max_length=100,
+        description=(
+            "Relative project files copied read-only into the Bash sandbox. "
+            "Bash steps can access only these files under $WORKFLOW_ROOT."
+        ),
+    )
     steps: list[WorkflowStep] = Field(min_length=1, max_length=MAX_WORKFLOW_STEPS)
     tests: list[WorkflowTestCase] = Field(min_length=1, max_length=20)
+
+    @field_validator("read_files")
+    @classmethod
+    def _validate_read_files(cls, paths: list[str]) -> list[str]:
+        if len(paths) != len(set(paths)):
+            raise ValueError("Workflow read_files must be unique")
+        for path in paths:
+            if not path.strip() or os.path.isabs(path):
+                raise ValueError("Workflow read_files must contain relative file paths")
+            normalized = path.replace("\\", "/")
+            if any(part in ("", ".", "..") for part in normalized.split("/")):
+                raise ValueError("Workflow read_files must be normalized relative paths")
+            if _is_credential_like_path(normalized):
+                raise ValueError("Workflow read_files cannot include credential-like files")
+        return paths
 
     @model_validator(mode="after")
     def _validate_definition(self) -> "WorkflowDefinition":
         step_ids = [step.id for step in self.steps]
         if len(step_ids) != len(set(step_ids)):
             raise ValueError("Workflow step IDs must be unique")
+        if any(step.tool == "Bash" for step in self.steps) and not self.read_files:
+            raise ValueError("Bash workflow steps require an explicit read_files manifest")
         known_steps = set(step_ids)
         for case in self.tests:
             unknown = set(case.expected_contains) - known_steps
@@ -124,6 +171,57 @@ def _query_id(context: ToolUseContext) -> str:
     return str(tracking.get("chainId") or uuid.uuid4().hex)
 
 
+def _canonical_project_file(project_root: str, file_path: str) -> str:
+    root = os.path.realpath(os.path.abspath(project_root))
+    candidate = file_path if os.path.isabs(file_path) else os.path.join(root, file_path)
+    canonical = os.path.realpath(os.path.abspath(candidate))
+    try:
+        if os.path.commonpath((root, canonical)) != root:
+            raise ValueError("Workflow file is outside the project")
+    except ValueError as error:
+        if str(error) == "Workflow file is outside the project":
+            raise
+        raise ValueError("Workflow file is outside the project") from error
+    if canonical == root:
+        raise ValueError("Workflow file path must target a file")
+    return canonical
+
+
+def _materialize_readonly_workspace(
+    definition: WorkflowDefinition,
+    project_root: str,
+) -> tempfile.TemporaryDirectory:
+    root = os.path.realpath(os.path.abspath(project_root))
+    workspace = tempfile.TemporaryDirectory(prefix="agent-workflow-readonly-")
+    copied_paths: set[str] = set()
+    total_bytes = 0
+    try:
+        for relative_path in definition.read_files:
+            source = _canonical_project_file(root, relative_path)
+            if source in copied_paths:
+                raise ValueError("Workflow read_files resolve to duplicate paths")
+            copied_paths.add(source)
+            relative_source = os.path.relpath(source, root)
+            if _is_credential_like_path(relative_source):
+                raise ValueError("Workflow cannot mount credential-like files")
+            if not os.path.isfile(source):
+                raise ValueError(
+                    f"Workflow declared input is not a regular file: {relative_path}"
+                )
+            total_bytes += os.path.getsize(source)
+            if total_bytes > MAX_WORKFLOW_READ_BYTES:
+                raise ValueError(
+                    f"Workflow read_files exceeds {MAX_WORKFLOW_READ_BYTES} bytes"
+                )
+            destination = os.path.join(workspace.name, os.path.relpath(source, root))
+            os.makedirs(os.path.dirname(destination), exist_ok=True)
+            shutil.copyfile(source, destination)
+        return workspace
+    except Exception:
+        workspace.cleanup()
+        raise
+
+
 async def _execute_definition(
     definition: WorkflowDefinition,
     inputs: dict[str, Any],
@@ -135,42 +233,78 @@ async def _execute_definition(
         path = ".".join(str(part) for part in input_errors[0].absolute_path)
         raise ValueError(f"Workflow input failed its schema at {path or '<root>'}")
 
+    project_root = getattr(context, "project_root", None)
+    if not project_root:
+        raise ValueError("Workflow execution requires a project root")
+    declared_paths = {
+        _canonical_project_file(project_root, path)
+        for path in definition.read_files
+    }
+    sandbox_workspace = None
+    sandbox_context = context
+    if any(step.tool == "Bash" for step in definition.steps):
+        sandbox_workspace = _materialize_readonly_workspace(definition, project_root)
+        sandbox_context = copy.copy(context)
+        sandbox_context.workflow_sandbox_root = sandbox_workspace.name
+
     step_outputs: dict[str, str] = {}
     results: list[dict[str, Any]] = []
     succeeded = True
-    for step in definition.steps:
-        tool = find(step.tool)
-        if tool is None or tool.name not in WORKFLOW_READ_TOOLS:
-            raise ValueError(f"Workflow tool is unavailable or not permitted: {step.tool}")
-        arguments = _resolve_input_reference(step.arguments, inputs)
-        parsed = tool.input_schema.model_validate(arguments)
-        if not tool.is_read_only(parsed) or not tool.is_concurrency_safe(parsed):
-            raise ValueError(f"Workflow step is not read-only and concurrency-safe: {step.id}")
-        read_cache = getattr(context, "read_file_state", None)
-        if read_cache is not None:
-            read_cache.invalidate(expand_path(parsed.file_path))
-        result = await execute_tool(
-            {
-                "id": f"workflow-{uuid.uuid4().hex}",
-                "name": step.tool,
-                "input": arguments,
-            },
-            context,
-            can_use_tool=can_use_tool,
-        )
-        content = result.result_message.content
-        if len(content) > MAX_WORKFLOW_RESULT_CHARS:
-            content = content[:MAX_WORKFLOW_RESULT_CHARS] + "\n[workflow step output truncated]"
-        step_outputs[step.id] = content
-        results.append({
-            "step_id": step.id,
-            "tool": step.tool,
-            "status": "failed" if result.is_error else "succeeded",
-            "result": content,
-        })
-        if result.is_error:
-            succeeded = False
-            break
+    try:
+        for step in definition.steps:
+            tool = find(step.tool)
+            if tool is None or tool.name not in WORKFLOW_SAFE_TOOLS:
+                raise ValueError(f"Workflow tool is unavailable or not permitted: {step.tool}")
+            arguments = _resolve_input_reference(step.arguments, inputs)
+            parsed = tool.input_schema.model_validate(arguments)
+            if step.tool == "Bash" and (
+                parsed.timeout is None
+                or parsed.timeout > MAX_WORKFLOW_BASH_TIMEOUT_MS
+            ):
+                arguments = {
+                    **arguments,
+                    "timeout": MAX_WORKFLOW_BASH_TIMEOUT_MS,
+                }
+                parsed = tool.input_schema.model_validate(arguments)
+            if not tool.is_read_only(parsed) or not tool.is_concurrency_safe(parsed):
+                raise ValueError(f"Workflow step is not read-only and concurrency-safe: {step.id}")
+            if step.tool == "Read" and definition.read_files:
+                canonical_read = _canonical_project_file(
+                    project_root, parsed.file_path,
+                )
+                if canonical_read not in declared_paths:
+                    raise ValueError(
+                        f"Workflow Read step exceeds its read_files manifest: {step.id}"
+                    )
+            if step.tool == "Read":
+                read_cache = getattr(context, "read_file_state", None)
+                if read_cache is not None:
+                    read_cache.invalidate(expand_path(parsed.file_path))
+            result = await execute_tool(
+                {
+                    "id": f"workflow-{uuid.uuid4().hex}",
+                    "name": step.tool,
+                    "input": arguments,
+                },
+                sandbox_context if step.tool == "Bash" else context,
+                can_use_tool=can_use_tool,
+            )
+            content = result.result_message.content
+            if len(content) > MAX_WORKFLOW_RESULT_CHARS:
+                content = content[:MAX_WORKFLOW_RESULT_CHARS] + "\n[workflow step output truncated]"
+            step_outputs[step.id] = content
+            results.append({
+                "step_id": step.id,
+                "tool": step.tool,
+                "status": "failed" if result.is_error else "succeeded",
+                "result": content,
+            })
+            if result.is_error:
+                succeeded = False
+                break
+    finally:
+        if sandbox_workspace is not None:
+            sandbox_workspace.cleanup()
 
     output = {"steps": step_outputs}
     if succeeded and definition.output_schema is not None:
@@ -293,6 +427,13 @@ async def _list(
                 "version": item["version"],
                 "status": item["status"],
                 "description": item["definition"].get("description", ""),
+                "successful_runs": item["successful_runs"],
+                "successful_query_runs": item["successful_query_runs"],
+                "promotion_ready": (
+                    item["status"] == "quarantined"
+                    and item["successful_runs"] >= 3
+                    and item["successful_query_runs"] >= 2
+                ),
             }
             for item in definitions
         ],
@@ -340,14 +481,14 @@ def _build_tool(name: str, description: str, input_schema: type[BaseModel], call
 
 WorkflowProposeTool = _build_tool(
     "WorkflowPropose",
-    "Create a versioned read-only workflow in this session's quarantine.",
+    "Create a versioned read-only workflow in this session's quarantine. Bash steps require a read_files manifest and run in an isolated offline sandbox.",
     WorkflowProposeInput,
     _propose,
     _permission("Store this workflow candidate in the current session quarantine?"),
 )
 WorkflowRunTool = _build_tool(
     "WorkflowRun",
-    "Run an available read-only workflow and record its result.",
+    "Run an available read-only workflow and record its result. Bash steps can see only the declared read_files snapshot at $WORKFLOW_ROOT.",
     WorkflowRunInput,
     _run,
     _permission("Run this read-only workflow?"),

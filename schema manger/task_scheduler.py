@@ -307,16 +307,20 @@ def _commit_task_staging(scope: TaskFileScope) -> None:
             raise FileLeaseConflict(
                 f"Task {scope.task_id} lost its write lease for {path}."
             )
-        if _file_sha256(path) != scope.baseline_write_hashes.get(path):
+        staged_path = scope.execution_path("Write", path)
+        current_hash = _file_sha256(path)
+        staged_hash = _file_sha256(staged_path)
+        if current_hash == staged_hash:
+            continue
+        if current_hash != scope.baseline_write_hashes.get(path):
             raise FileLeaseConflict(
                 f"Workspace file changed while Task {scope.task_id} was staged: {path}"
             )
-        staged_path = scope.execution_path("Write", path)
         if not os.path.isfile(staged_path):
             if scope.baseline_write_hashes.get(path) is not None:
                 raise ValueError(f"Staged worker output is missing: {path}")
             continue
-        if _file_sha256(staged_path) == scope.baseline_write_hashes.get(path):
+        if staged_hash == scope.baseline_write_hashes.get(path):
             continue
         changes.append((path, staged_path))
 
@@ -532,6 +536,20 @@ def validate_task_graph(
 TaskRunner = Callable[
     [TaskSpec, dict[str, Any], TaskFileScope], Awaitable[Any],
 ]
+NodeCommitCallback = Callable[
+    [TaskSpec, TaskResultEnvelope, str, list[dict[str, Any]]], None,
+]
+
+
+def _staged_write_manifest(scope: TaskFileScope) -> list[dict[str, Any]]:
+    return [
+        {
+            "path": os.path.relpath(path, scope.project_root),
+            "before_sha256": scope.baseline_write_hashes.get(path),
+            "after_sha256": _file_sha256(scope.execution_path("Write", path)),
+        }
+        for path in sorted(scope.write_paths)
+    ]
 
 
 async def run_task_graph(
@@ -542,6 +560,7 @@ async def run_task_graph(
     run_id: str | None = None,
     max_parallel: int = 4,
     on_event: Callable[[dict[str, object]], None] | None = None,
+    on_node_commit: NodeCommitCallback | None = None,
     cancel_event: asyncio.Event | None = None,
 ) -> list[TaskOutcome]:
     """Run conflict-free ready tasks concurrently within the configured limit.
@@ -623,7 +642,12 @@ async def run_task_graph(
                     )
             result = await runner(node.spec, dependency_outputs, scope)
             if isinstance(result, TaskResultEnvelope) and result.status == "ok":
+                if on_node_commit is not None and node.write_paths:
+                    manifest = _staged_write_manifest(scope)
+                    on_node_commit(node.spec, result, "prepared", manifest)
                 _commit_task_staging(scope)
+                if on_node_commit is not None and node.write_paths:
+                    on_node_commit(node.spec, result, "committed", manifest)
             return result
         finally:
             _cleanup_task_staging(scope)

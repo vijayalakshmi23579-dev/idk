@@ -4,14 +4,14 @@ import os
 
 os.environ["AGENT_STORE_PATH"] = ":memory:"
 
-from textual.widgets import Header, Input
+from textual.widgets import Button, Header, Input
 
 import ui
 from messages import ProgressMessage, ToolResultMessage
 from registry import find
 from ui import (
-    AgentApp, PlanPanel, StatusBar, StreamingMarkdown, SystemNotice,
-    ToolCard, UserMessage,
+    AgentApp, PermissionScreen, PlanPanel, StatusBar, StreamingMarkdown,
+    SystemNotice, ToolCard, UserMessage,
 )
 
 
@@ -94,6 +94,37 @@ async def main():
         })
         assert any("Provider fallback" in notice._text
                    for notice in app.query(SystemNotice))
+
+        first_permission = app.run_worker(
+            app._can_use_tool(
+                type("Decision", (), {"message": "Allow the first worker?"})(),
+            ),
+            group="permission-test",
+            exclusive=False,
+        )
+        await pilot.pause()
+        assert isinstance(app.screen, PermissionScreen)
+        app.screen.query_one("#allow", Button)
+        app.screen.query_one("#deny", Button)
+        second_permission = app.run_worker(
+            app._can_use_tool(
+                type("Decision", (), {"message": "Allow the second worker?"})(),
+            ),
+            group="permission-test",
+            exclusive=False,
+        )
+        await pilot.pause()
+        assert isinstance(app.screen, PermissionScreen)
+        await pilot.press("y")
+        assert await first_permission.wait() is True
+        await pilot.pause()
+        assert isinstance(app.screen, PermissionScreen)
+        app.screen.query_one("#allow", Button)
+        app.screen.query_one("#deny", Button)
+        await pilot.press("n")
+        assert await second_permission.wait() is False
+        await pilot.pause()
+        assert app.query_one(StatusBar).activity == "Ready"
 
         await pilot.press("ctrl+c")
         await pilot.pause()

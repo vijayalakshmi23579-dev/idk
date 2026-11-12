@@ -152,16 +152,22 @@ class PlanPanel(Collapsible):
 
 
 class StatusBar(Horizontal):
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.activity = "Ready"
+
     def compose(self) -> ComposeResult:
         yield LoadingIndicator(id="spinner")
         yield Label("Ready", id="activity")
         yield Label("0 tokens", id="tokens")
 
     def set_running(self, activity: str) -> None:
+        self.activity = activity
         self.query_one("#spinner", LoadingIndicator).display = True
         self.query_one("#activity", Label).update(activity)
 
     def set_idle(self) -> None:
+        self.activity = "Ready"
         self.query_one("#spinner", LoadingIndicator).display = False
         self.query_one("#activity", Label).update("Ready")
 
@@ -237,6 +243,8 @@ class AgentApp(App):
         self._tool_cards: dict[str, ToolCard] = {}
         self._turn_tokens = 0
         self._exit_when_idle = False
+        self._permission_lock = asyncio.Lock()
+        self._permission_waiters = 0
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -423,10 +431,21 @@ class AgentApp(App):
             self._append_widget(SystemNotice(getattr(event, "content", "")))
 
     async def _can_use_tool(self, decision: Any) -> bool:
-        self.query_one(StatusBar).set_running("Waiting for permission")
-        return bool(await self.push_screen_wait(
-            PermissionScreen(getattr(decision, "message", str(decision))),
-        ))
+        self._permission_waiters += 1
+        try:
+            async with self._permission_lock:
+                self.query_one(StatusBar).set_running("Waiting for permission")
+                return bool(await self.push_screen_wait(
+                    PermissionScreen(getattr(decision, "message", str(decision))),
+                ))
+        finally:
+            self._permission_waiters -= 1
+            if self._permission_waiters == 0 and self.is_running:
+                worker = self._worker
+                if worker is not None and not worker.is_finished:
+                    self.query_one(StatusBar).set_running("Working")
+                else:
+                    self.query_one(StatusBar).set_idle()
 
     def _refresh_plan(self) -> None:
         store = getattr(self.ctx, "_store", None)

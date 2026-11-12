@@ -489,7 +489,17 @@ class Store:
     ) -> list[dict]:
         canonical_root = os.path.realpath(os.path.abspath(project_root))
         rows = self.db.execute(
-            "SELECT workflow_id, version, owner_session, status, definition "
+            "SELECT workflow_id, version, owner_session, status, definition, "
+            "(SELECT COUNT(*) FROM workflow_runs r WHERE "
+            "r.project_root = workflow_definitions.project_root "
+            "AND r.workflow_id = workflow_definitions.workflow_id "
+            "AND r.version = workflow_definitions.version AND r.succeeded = 1) "
+            "AS successful_runs, "
+            "(SELECT COUNT(DISTINCT query_id) FROM workflow_runs r WHERE "
+            "r.project_root = workflow_definitions.project_root "
+            "AND r.workflow_id = workflow_definitions.workflow_id "
+            "AND r.version = workflow_definitions.version AND r.succeeded = 1) "
+            "AS successful_query_runs "
             "FROM workflow_definitions WHERE project_root = ? "
             "AND (owner_session = ? OR status = 'promoted') "
             "ORDER BY workflow_id, version",
@@ -501,6 +511,8 @@ class Store:
             "owner_session": row["owner_session"],
             "status": row["status"],
             "definition": json.loads(row["definition"]),
+            "successful_runs": int(row["successful_runs"]),
+            "successful_query_runs": int(row["successful_query_runs"]),
         } for row in rows]
 
     def record_workflow_run(

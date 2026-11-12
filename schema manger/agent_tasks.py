@@ -6,6 +6,7 @@ import copy
 import hashlib
 import json
 import os
+import re
 import time
 import uuid
 from typing import Any
@@ -278,6 +279,7 @@ def _serialize_task_run(run_id: str, record: dict[str, Any]) -> dict[str, Any]:
             for task_id, spec in record["task_specs"].items()
         },
         "outcomes": serialized_outcomes,
+        "node_commits": record.get("node_commits", {}),
         "failed_task_ids": sorted(record["failed_task_ids"]),
         "recovered_by": record.get("recovered_by"),
         "recovered_task_runs": record.get("recovered_task_runs", {}),
@@ -303,6 +305,44 @@ def _restore_task_run(payload: dict[str, Any]) -> dict[str, Any]:
             output=output,
             error=data.get("error", ""),
         )
+    node_commits = payload.get("node_commits", {})
+    if not isinstance(node_commits, dict):
+        raise ValueError("Invalid Task node commit ledger")
+    for task_id, commit in node_commits.items():
+        if task_id not in specs or not isinstance(commit, dict):
+            raise ValueError("Task node commit references an unknown task")
+        if commit.get("status") not in (
+            "prepared", "committed", "reviewed_partial",
+        ):
+            raise ValueError("Invalid Task node commit status")
+        writes = commit.get("writes")
+        if not isinstance(writes, list) or len(writes) != len(specs[task_id].write_files):
+            raise ValueError("Invalid Task node commit manifest")
+        declared_paths = {
+            canonical_task_path(path, payload["project_root"])
+            for path in specs[task_id].write_files
+        }
+        recorded_paths: set[str] = set()
+        for item in writes:
+            if not isinstance(item, dict) or not isinstance(item.get("path"), str):
+                raise ValueError("Invalid Task node commit path")
+            path = canonical_task_path(item["path"], payload["project_root"])
+            before_hash = item.get("before_sha256")
+            after_hash = item.get("after_sha256")
+            if path not in declared_paths or path in recorded_paths:
+                raise ValueError("Task node commit paths do not match its write scope")
+            if any(
+                digest is not None
+                and (not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{64}", digest) is None)
+                for digest in (before_hash, after_hash)
+            ):
+                raise ValueError("Invalid Task node commit hash")
+            recorded_paths.add(path)
+        if recorded_paths != declared_paths:
+            raise ValueError("Task node commit manifest omits declared write paths")
+        result = TaskResultEnvelope.model_validate(commit.get("result"))
+        if result.run_id != payload["run_id"] or result.node_id != task_id or result.status != "ok":
+            raise ValueError("Task node commit result does not match its run and task")
     return {
         "run_status": payload.get("run_status", "completed"),
         "cancel_requested": payload.get("cancel_requested", False),
@@ -319,10 +359,74 @@ def _restore_task_run(payload: dict[str, Any]) -> dict[str, Any]:
         "charged_usage": payload["charged_usage"],
         "task_specs": specs,
         "outcomes": outcomes,
+        "node_commits": node_commits,
         "failed_task_ids": set(payload["failed_task_ids"]),
         "recovered_by": payload.get("recovered_by"),
         "recovered_task_runs": payload.get("recovered_task_runs", {}),
     }
+
+
+def _file_sha256(path: str) -> str | None:
+    if not os.path.isfile(path):
+        return None
+    digest = hashlib.sha256()
+    with open(path, "rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _recoverable_committed_output(
+    task: TaskSpec,
+    commit: dict[str, Any] | None,
+    project_root: str,
+    run_id: str,
+) -> TaskResultEnvelope | None:
+    if not isinstance(commit, dict) or commit.get("status") not in (
+        "prepared", "committed",
+    ):
+        return None
+    writes = commit.get("writes")
+    if not isinstance(writes, list) or len(writes) != len(task.write_files):
+        return None
+    declared_paths = {
+        canonical_task_path(path, project_root)
+        for path in task.write_files
+    }
+    recorded_paths: set[str] = set()
+    for item in writes:
+        if not isinstance(item, dict) or not isinstance(item.get("path"), str):
+            return None
+        try:
+            path = canonical_task_path(item["path"], project_root)
+        except ValueError:
+            return None
+        after_hash = item.get("after_sha256")
+        if (
+            path not in declared_paths
+            or path in recorded_paths
+            or (
+                after_hash is not None
+                and (
+                    not isinstance(after_hash, str)
+                    or re.fullmatch(r"[0-9a-f]{64}", after_hash) is None
+                )
+            )
+            or _file_sha256(path) != after_hash
+        ):
+            return None
+        recorded_paths.add(path)
+    if recorded_paths != declared_paths:
+        return None
+    try:
+        result = TaskResultEnvelope.model_validate(commit.get("result"))
+    except Exception:
+        return None
+    return (
+        result
+        if result.status == "ok" and result.node_id == task.id and result.run_id == run_id
+        else None
+    )
 
 
 def _load_task_run(context: ToolUseContext, run_id: str) -> dict[str, Any] | None:
@@ -1284,6 +1388,9 @@ async def _call(
                 "error_type": progress.get("error_type"),
                 "model_id": progress.get("model_id"),
                 "attempt_id": progress.get("attempt_id"),
+                "commit_status": record.get("node_commits", {}).get(
+                    task_id, {},
+                ).get("status"),
             })
         return ToolResult(data={
             "mode": "inspect",
@@ -1330,9 +1437,43 @@ async def _call(
     if input.reconcile_run_id:
         record = _task_run_registry(context)[input.reconcile_run_id]
         reconciled_task_ids = []
+        finalized_commit_task_ids = []
         now = time.time()
         for task_id, outcome in record["outcomes"].items():
+            if outcome.status == TaskStatus.SUCCEEDED:
+                continue
+            spec = record["task_specs"].get(task_id)
+            commit = record.get("node_commits", {}).get(task_id)
+            recovered_output = (
+                _recoverable_committed_output(
+                    spec,
+                    commit,
+                    record["project_root"],
+                    input.reconcile_run_id,
+                )
+                if spec is not None else None
+            )
+            if recovered_output is not None:
+                outcome.status = TaskStatus.SUCCEEDED
+                outcome.output = recovered_output
+                outcome.error = ""
+                record["failed_task_ids"].discard(task_id)
+                commit["status"] = "committed"
+                previous_progress = record.setdefault("progress", {}).get(task_id, {})
+                record["progress"][task_id] = {
+                    **previous_progress,
+                    "status": "succeeded",
+                    "occurred_at": now,
+                    "commit_recovered": True,
+                    "model_id": recovered_output.model_id,
+                }
+                finalized_commit_task_ids.append(task_id)
+                continue
             if outcome.status not in (TaskStatus.PENDING, TaskStatus.RUNNING):
+                if isinstance(commit, dict) and commit.get("status") in (
+                    "prepared", "committed",
+                ):
+                    commit["status"] = "reviewed_partial"
                 continue
             outcome.status = TaskStatus.FAILED
             outcome.error = (
@@ -1340,6 +1481,10 @@ async def _call(
                 "Inspect workspace changes before retrying this task."
             )
             record["failed_task_ids"].add(task_id)
+            if isinstance(commit, dict) and commit.get("status") in (
+                "prepared", "committed",
+            ):
+                commit["status"] = "reviewed_partial"
             previous_progress = record.setdefault("progress", {}).get(task_id, {})
             record["progress"][task_id] = {
                 **previous_progress,
@@ -1369,7 +1514,12 @@ async def _call(
             "run_status": record["run_status"],
             "run_persisted": run_persisted,
             "reconciled_task_ids": reconciled_task_ids,
+            "finalized_commit_task_ids": finalized_commit_task_ids,
             "next_action": (
+                "Committed outputs were verified by hash and finalized without rerunning. "
+                "Inspect remaining affected files before bounded recovery. "
+                "No worker was resumed and no workspace changes were undone."
+                if finalized_commit_task_ids else
                 "Inspect every affected file before submitting bounded recovery. "
                 "No worker was resumed and no workspace changes were undone."
             ),
@@ -1580,6 +1730,7 @@ async def _call(
         "outcomes": {
             task.id: TaskOutcome(task_id=task.id) for task in input.tasks
         },
+        "node_commits": {},
         "failed_task_ids": set(),
         "recovered_task_runs": {},
         "run_budget": run_budget.model_dump(),
@@ -1651,6 +1802,39 @@ async def _call(
             except Exception:
                 pass
 
+    def persist_node_commit(
+        task: TaskSpec,
+        result: TaskResultEnvelope,
+        status: str,
+        writes: list[dict[str, Any]],
+    ) -> None:
+        record = {
+            "status": status,
+            "attempt_id": run_record.get("progress", {}).get(
+                task.id, {},
+            ).get("attempt_id"),
+            "writes": writes,
+            "result": result.model_dump(mode="json"),
+        }
+        run_record.setdefault("node_commits", {})[task.id] = record
+        previous_progress = run_record.setdefault("progress", {}).get(task.id, {})
+        run_record["progress"][task.id] = {
+            **previous_progress,
+            "commit_status": status,
+        }
+        run_record["outcomes"][task.id] = TaskOutcome(
+            task_id=task.id,
+            status=TaskStatus.RUNNING,
+            output=result,
+        )
+        if store is not None and session_id:
+            store.save_task_run(
+                session_id,
+                run_id,
+                root,
+                _serialize_task_run(run_id, run_record),
+            )
+
     try:
         outcomes = await run_task_graph(
             input.tasks,
@@ -1659,6 +1843,7 @@ async def _call(
             run_id=run_id,
             max_parallel=MAX_PARALLEL_READ_TASKS,
             on_event=publish_task_event if store is not None or on_progress is not None else None,
+            on_node_commit=persist_node_commit,
             cancel_event=run_record["_cancel_event"],
         )
     finally:

@@ -1,5 +1,6 @@
 """Offline integration tests for the model-facing Task tool."""
 import asyncio
+import hashlib
 import json
 import os
 import tempfile
@@ -700,6 +701,203 @@ async def main():
         assert reconciled_record["reconciled_at"] is not None
         assert reconciled_record["outcomes"][interrupted_spec.id]["status"] == "failed"
         assert reconciled_record["failed_task_ids"] == [interrupted_spec.id]
+
+        deep_spec = TaskSpec(
+            id="depth-limited-worker",
+            instruction="Failed leaf at the maximum recovery depth",
+        )
+        recovery_context._store.save_task_run(
+            recovery_context.session_id,
+            "depth-limited-run",
+            root,
+            {
+                "schema_version": "1.0",
+                "run_id": "depth-limited-run",
+                "run_status": "completed",
+                "session_id": recovery_context.session_id,
+                "project_root": root,
+                "recovery_depth": agent_tasks.MAX_TASK_RECOVERY_DEPTH,
+                "root_run_id": "depth-limited-run",
+                "chain_task_count": 1,
+                "run_budget": {"schema_version": "1.0"},
+                "charged_usage": {},
+                "task_specs": {
+                    deep_spec.id: deep_spec.model_dump(mode="json"),
+                },
+                "outcomes": {
+                    deep_spec.id: {
+                        "status": "failed", "output": None, "error": "failed",
+                    },
+                },
+                "failed_task_ids": [deep_spec.id],
+                "recovered_task_runs": {},
+            },
+        )
+        try:
+            await AgentTasksTool.call(
+                AgentTasksInput(
+                    recovery_of_run="depth-limited-run",
+                    tasks=[{
+                        "id": "recovery-beyond-depth",
+                        "instruction": "Do not exceed the configured recovery depth",
+                        "recovery_of": deep_spec.id,
+                    }],
+                ),
+                recovery_context,
+            )
+            raise AssertionError("recovery depth must remain bounded")
+        except ValueError as error:
+            assert "recovery depth is limited" in str(error)
+
+        committed_path = os.path.join(root, "committed-after-restart.txt")
+        with open(committed_path, "w", encoding="utf-8") as target:
+            target.write("committed output")
+        committed_spec = TaskSpec(
+            id="commit-interrupted-worker",
+            instruction="Worker whose output was committed before restart",
+            write_files=[committed_path],
+        )
+        committed_envelope = TaskResultEnvelope(
+            run_id="commit-interrupted-run",
+            node_id=committed_spec.id,
+            status="ok",
+            summary="Output committed",
+        )
+        recovery_context._store.save_task_run(
+            recovery_context.session_id,
+            "commit-interrupted-run",
+            root,
+            {
+                "schema_version": "1.0",
+                "run_id": "commit-interrupted-run",
+                "run_status": "running",
+                "session_id": recovery_context.session_id,
+                "project_root": root,
+                "recovery_depth": 0,
+                "root_run_id": "commit-interrupted-run",
+                "chain_task_count": 1,
+                "run_budget": {"schema_version": "1.0"},
+                "charged_usage": {},
+                "task_specs": {
+                    committed_spec.id: committed_spec.model_dump(mode="json"),
+                },
+                "outcomes": {
+                    committed_spec.id: {
+                        "status": "running", "output": None, "error": "",
+                    },
+                },
+                "failed_task_ids": [],
+                "recovered_task_runs": {},
+                "progress": {committed_spec.id: {"status": "started"}},
+                "node_commits": {
+                    committed_spec.id: {
+                        "status": "prepared",
+                        "writes": [{
+                            "path": "committed-after-restart.txt",
+                            "before_sha256": None,
+                            "after_sha256": hashlib.sha256(
+                                b"committed output",
+                            ).hexdigest(),
+                        }],
+                        "result": committed_envelope.model_dump(mode="json"),
+                    },
+                },
+            },
+        )
+        corrupt_commit_payload = recovery_context._store.get_task_run(
+            "commit-interrupted-run", root, recovery_context.session_id,
+        )
+        corrupt_commit_payload["node_commits"][committed_spec.id]["writes"] = []
+        try:
+            agent_tasks._restore_task_run(corrupt_commit_payload)
+            raise AssertionError("truncated commit manifests must be rejected")
+        except ValueError as error:
+            assert "Invalid Task node commit manifest" in str(error)
+        finalized_commit = await AgentTasksTool.call(
+            AgentTasksInput(
+                reconcile_run_id="commit-interrupted-run",
+                side_effects_reviewed=True,
+            ),
+            recovery_context,
+        )
+        assert finalized_commit.data["finalized_commit_task_ids"] == [
+            committed_spec.id,
+        ]
+        assert finalized_commit.data["reconciled_task_ids"] == []
+        finalized_record = recovery_context._store.get_task_run(
+            "commit-interrupted-run", root, recovery_context.session_id,
+        )
+        assert finalized_record["outcomes"][committed_spec.id]["status"] == "succeeded"
+        assert finalized_record["failed_task_ids"] == []
+        assert finalized_record["node_commits"][committed_spec.id]["status"] == "committed"
+
+        partial_path = os.path.join(root, "partial-after-restart.txt")
+        with open(partial_path, "w", encoding="utf-8") as target:
+            target.write("baseline")
+        partial_spec = TaskSpec(
+            id="partial-commit-worker",
+            instruction="Worker whose staged commit did not fully land",
+            write_files=[partial_path],
+        )
+        partial_envelope = TaskResultEnvelope(
+            run_id="partial-commit-run",
+            node_id=partial_spec.id,
+            status="ok",
+            summary="Output may be partially committed",
+        )
+        recovery_context._store.save_task_run(
+            recovery_context.session_id,
+            "partial-commit-run",
+            root,
+            {
+                "schema_version": "1.0",
+                "run_id": "partial-commit-run",
+                "run_status": "running",
+                "session_id": recovery_context.session_id,
+                "project_root": root,
+                "recovery_depth": 0,
+                "root_run_id": "partial-commit-run",
+                "chain_task_count": 1,
+                "run_budget": {"schema_version": "1.0"},
+                "charged_usage": {},
+                "task_specs": {
+                    partial_spec.id: partial_spec.model_dump(mode="json"),
+                },
+                "outcomes": {
+                    partial_spec.id: {
+                        "status": "running", "output": None, "error": "",
+                    },
+                },
+                "failed_task_ids": [],
+                "recovered_task_runs": {},
+                "progress": {partial_spec.id: {"status": "started"}},
+                "node_commits": {
+                    partial_spec.id: {
+                        "status": "prepared",
+                        "writes": [{
+                            "path": "partial-after-restart.txt",
+                            "before_sha256": hashlib.sha256(b"baseline").hexdigest(),
+                            "after_sha256": hashlib.sha256(b"new output").hexdigest(),
+                        }],
+                        "result": partial_envelope.model_dump(mode="json"),
+                    },
+                },
+            },
+        )
+        partial_commit = await AgentTasksTool.call(
+            AgentTasksInput(
+                reconcile_run_id="partial-commit-run",
+                side_effects_reviewed=True,
+            ),
+            recovery_context,
+        )
+        assert partial_commit.data["finalized_commit_task_ids"] == []
+        assert partial_commit.data["reconciled_task_ids"] == [partial_spec.id]
+        partial_record = recovery_context._store.get_task_run(
+            "partial-commit-run", root, recovery_context.session_id,
+        )
+        assert partial_record["outcomes"][partial_spec.id]["status"] == "failed"
+        assert partial_record["node_commits"][partial_spec.id]["status"] == "reviewed_partial"
 
         try:
             await AgentTasksTool.call(

@@ -1,5 +1,6 @@
 """Offline tests for DAG validation, dependency payloads, and file leases."""
 import asyncio
+import hashlib
 import os
 import subprocess
 import tempfile
@@ -11,6 +12,7 @@ from task_scheduler import (
     TaskFileScope,
     TaskSpec,
     TaskStatus,
+    _commit_task_staging,
     run_task_graph,
     validate_task_graph,
 )
@@ -291,15 +293,47 @@ async def main():
         assert discarded[0].status == TaskStatus.FAILED
         assert open(staged_path, encoding="utf-8").read() == "before"
 
+        commit_events = []
         committed = await run_task_graph([
             TaskSpec(
                 id="commit-staged",
                 instruction="Commit successful staged output",
                 write_files=[staged_path],
             ),
-        ], staged_runner, project_root=root)
+        ], staged_runner, project_root=root, on_node_commit=(
+            lambda spec, envelope, status, writes: commit_events.append(
+                (spec.id, envelope.status, status, writes),
+            )
+        ))
         assert committed[0].status == TaskStatus.SUCCEEDED
         assert open(staged_path, encoding="utf-8").read() == "commit-staged"
+        assert [event[2] for event in commit_events] == ["prepared", "committed"]
+        assert all(event[0] == "commit-staged" and event[1] == "ok" for event in commit_events)
+        assert commit_events[0][3] == commit_events[1][3]
+        assert commit_events[0][3][0]["before_sha256"] == hashlib.sha256(b"before").hexdigest()
+        assert commit_events[0][3][0]["after_sha256"] == hashlib.sha256(b"commit-staged").hexdigest()
+
+        retry_leases = FileLeaseRegistry(root)
+        retry_path = os.path.realpath(staged_path)
+        retry_leases.acquire("commit-retry", frozenset({retry_path}))
+        with tempfile.TemporaryDirectory(prefix="task-commit-retry-") as retry_staging:
+            retry_output = os.path.join(retry_staging, "src", "staged.py")
+            os.makedirs(os.path.dirname(retry_output), exist_ok=True)
+            with open(retry_output, "w", encoding="utf-8") as target:
+                target.write("commit-staged")
+            _commit_task_staging(TaskFileScope(
+                task_id="commit-retry",
+                project_root=root,
+                read_paths=frozenset(),
+                write_paths=frozenset({retry_path}),
+                leases=retry_leases,
+                staging_root=retry_staging,
+                baseline_write_hashes={
+                    retry_path: hashlib.sha256(b"before").hexdigest(),
+                },
+            ))
+        assert open(staged_path, encoding="utf-8").read() == "commit-staged"
+        retry_leases.release("commit-retry")
 
         conflicted = await run_task_graph([
             TaskSpec(

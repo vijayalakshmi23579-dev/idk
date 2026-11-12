@@ -377,7 +377,10 @@ def main():
         "steps": [],
     }
     store.save_workflow_definition(tmp, sid, workflow_definition)
-    assert len(store.list_workflow_definitions(tmp, sid)) == 1
+    workflow_list = store.list_workflow_definitions(tmp, sid)
+    assert len(workflow_list) == 1
+    assert workflow_list[0]["successful_runs"] == 0
+    assert workflow_list[0]["successful_query_runs"] == 0
     assert store.list_workflow_definitions(tmp, "other-session") == []
     assert store.get_workflow_definition(
         tmp, "read-package-context", 1, "other-session",
@@ -398,6 +401,9 @@ def main():
     store.record_workflow_run(
         tmp, "read-package-context", 1, sid, "query-b", True,
     )
+    workflow_usage = store.list_workflow_definitions(tmp, sid)[0]
+    assert workflow_usage["successful_runs"] == 3
+    assert workflow_usage["successful_query_runs"] == 2
     promoted_usage = store.promote_workflow_definition(
         tmp, "read-package-context", 1, sid,
     )

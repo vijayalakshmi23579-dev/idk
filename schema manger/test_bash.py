@@ -1,6 +1,7 @@
 """test_bash.py — no network. Real commands in subprocesses."""
 import asyncio
 import os
+import shutil
 import tempfile
 
 from registry import register, clear
@@ -8,7 +9,7 @@ from execute import execute_tool
 from tools.bash import (
     BashTool, BashInput, is_read_only_command, is_destructive_command,
     split_compound_command, interpret_exit_code,
-    DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS,
+    DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS, MAX_OUTPUT_LENGTH,
 )
 from state import AppState, FileStateCache, ToolPermissionContext
 from tool import ToolUseContext
@@ -213,6 +214,26 @@ async def main():
     assert BashTool.is_destructive(BashInput(command="rm foo")) is True
     assert BashTool.to_auto_classifier_input(BashInput(command="ls")) == "ls"
     print("✅ Tool metadata OK")
+
+    # ═══ 18. Sandboxed workflow output never spills to the host ═══
+    if shutil.which("bwrap"):
+        with tempfile.TemporaryDirectory() as sandbox_root:
+            large_path = os.path.join(sandbox_root, "large.txt")
+            with open(large_path, "w", encoding="utf-8") as source:
+                source.write("x" * (MAX_OUTPUT_LENGTH + 1))
+            context = make_ctx()
+            context.workflow_sandbox_root = sandbox_root
+            result = await BashTool.call(
+                BashInput(command='cat "$WORKFLOW_ROOT/large.txt"'),
+                context,
+            )
+            assert result.data["truncated"] is True
+            assert result.data["fullOutputPath"] is None
+            assert "output truncated" in BashTool.map_tool_result_to_tool_result_block_param(
+                result.data, "sandbox-large-output",
+            )["content"].lower()
+            assert os.path.getsize(large_path) == MAX_OUTPUT_LENGTH + 1
+    print("✅ Sandboxed workflow output stays in memory OK")
 
     print("\n🎉 All bash.py tests passed")
 

@@ -84,6 +84,7 @@ class ToolUseContext:
     file_scope: Any = None
     project_root: str | None = None
     session_id: str | None = None
+    workflow_sandbox_root: str | None = None
 
     # ── Sub-agent permission degradation ──
     should_avoid_permission_prompts: bool = False

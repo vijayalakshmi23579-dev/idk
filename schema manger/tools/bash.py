@@ -36,6 +36,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from messages import ToolUseBlock  # re-export for callers
 from permission_types import PermissionAllowDecision
+from os_sandbox import build_readonly_sandbox_command
 from tool import ToolResult, ToolUseContext, ValidationResult, build_tool
 from path_safety import check_path_safety_for_auto_edit, is_dangerous_removal_path
 
@@ -369,15 +370,24 @@ async def _call(
     cmd = input.command
     timeout_ms = input.timeout or DEFAULT_TIMEOUT_MS
     timeout_s = timeout_ms / 1000.0
+    workflow_sandboxed = bool(getattr(ctx, "workflow_sandbox_root", None))
 
     try:
-        proc = await asyncio.create_subprocess_shell(
-            cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            start_new_session=os.name == "posix",
-        )
-    except OSError as e:
+        if workflow_sandboxed:
+            proc = await asyncio.create_subprocess_exec(
+                *build_readonly_sandbox_command(ctx.workflow_sandbox_root, cmd),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                start_new_session=os.name == "posix",
+            )
+        else:
+            proc = await asyncio.create_subprocess_shell(
+                cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                start_new_session=os.name == "posix",
+            )
+    except (OSError, RuntimeError, ValueError) as e:
         return ToolResult(data={
             "stdout": "",
             "stderr": f"Failed to spawn shell: {e}",
@@ -433,15 +443,15 @@ async def _call(
     truncated = False
     if len(combined) > MAX_OUTPUT_LENGTH:
         truncated = True
-        # Persist full output to disk; return a preview
-        try:
-            fd, full_output_path = tempfile.mkstemp(
-                prefix="bash_output_", suffix=".txt",
-            )
-            with os.fdopen(fd, "w") as f:
-                f.write(combined)
-        except OSError:
-            full_output_path = None
+        if not workflow_sandboxed:
+            try:
+                fd, full_output_path = tempfile.mkstemp(
+                    prefix="bash_output_", suffix=".txt",
+                )
+                with os.fdopen(fd, "w") as f:
+                    f.write(combined)
+            except OSError:
+                full_output_path = None
         # Preview: first half of the limit
         preview_len = MAX_OUTPUT_LENGTH // 2
         stdout = stdout[:preview_len]
@@ -570,11 +580,14 @@ def _map_result(data: dict, tool_use_id: str) -> dict:
     elif not parts and no_output_expected:
         parts.append("(Command completed with no output — expected)")
 
-    if truncated and full_output_path:
-        parts.append(
-            f"[output truncated at {MAX_OUTPUT_LENGTH} chars — full output "
-            f"at {full_output_path}. Use Read to see more.]"
-        )
+    if truncated:
+        if full_output_path:
+            parts.append(
+                f"[output truncated at {MAX_OUTPUT_LENGTH} chars — full output "
+                f"at {full_output_path}. Use Read to see more.]"
+            )
+        else:
+            parts.append(f"[output truncated at {MAX_OUTPUT_LENGTH} chars]")
 
     content = "\n".join(parts) if parts else "(no output)"
 

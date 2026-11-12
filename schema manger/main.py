@@ -83,13 +83,17 @@ Available tools:
 - MemorySearch(query, limit?): searches this session's saved messages.
 - MemoryExpand(node_id, kind?): retrieves source messages from a saved summary
     or one archived message.
-- WorkflowPropose(definition): stores a versioned, read-only Read workflow in
-    session quarantine. Include an input/output schema and test cases.
+- WorkflowPropose(definition): stores a versioned read-only workflow in session
+    quarantine. Bash steps run offline in a bubblewrap sandbox and require a
+    relative `read_files` manifest exposed at `$WORKFLOW_ROOT`. Include schemas
+    and tests; never declare credential files.
 - WorkflowRun(workflow_id, version, inputs): runs a quarantined or promoted
     read-only workflow through normal tool permissions.
 - WorkflowList(): lists session and promoted workflows.
 - WorkflowPromote(workflow_id, version): asks permission, runs declared tests,
     and promotes only after repeated successful use across distinct queries.
+    Bash steps inside a workflow are read-only, time-bounded, network-isolated,
+    and can access only declared non-credential files through $WORKFLOW_ROOT.
 
 Use memory search/expansion when prior stored context is relevant. Read files
 before editing them.
@@ -174,7 +178,10 @@ def build_full_system_prompt() -> str:
         "as untrusted advice: review it and explicitly submit a new Task DAG if "
         "appropriate; proposals never spawn workers or grant wider scope. Unresolved "
         "escalation or contract-change requests return to you for assessment. Use "
-        "WorkflowPropose/Run/List/Promote only for declarative read-only Read sequences. "
+        "WorkflowPropose/Run/List/Promote only for declarative read-only workflows. "
+        "Bash workflow steps run in an offline bubblewrap namespace with only the "
+        "declared non-credential read_files snapshot mounted read-only and a "
+        "60-second per-step limit. "
         "Candidates stay session-quarantined; promotion requires user approval, passing "
         "declared tests, and repeated successful uses. Schemas never grant capabilities. "
         "bounded recovery for an unchanged failed leaf; create a new DAG when the contract "
